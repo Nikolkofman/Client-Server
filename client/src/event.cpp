@@ -113,7 +113,14 @@ Event::Event(const std::string &frame_body): channel_name(""), city(""),
     }
     general_information = general_information_from_string;
 }
+void split_str(const std::string& str, char delimiter, std::vector<std::string>& tokens) {
+    std::stringstream ss(str);
+    std::string token;
 
+    while (std::getline(ss, token, delimiter)) {
+        tokens.push_back(token);
+    }
+}
 names_and_events parseEventsFile(std::string json_path)
 {
     std::ifstream f(json_path);
