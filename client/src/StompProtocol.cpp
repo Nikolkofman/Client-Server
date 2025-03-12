@@ -129,18 +129,18 @@ std::string StompProtocol::processCommand(const std::string& command) {
             std::cerr << "Please login first." << std::endl;
             return "";
         }
-
-        for (const auto& subscription : subscriptions) {
-            int receiptId = receiptIdCounter++;
-            pendingReceipts[std::to_string(receiptId)] = std::make_pair("exit_logout", subscription.first);
-            std::string frame = generateUnsubscribeFrame(subscription.first);
-            connectionHandler->sendFrameAscii(frame, '\0');
-        }
-
-        std::string disconnectFrame = generateDisconnectFrame();
+    
+        // ✅ Generate a new receipt ID for DISCONNECT
+        int disconnectReceiptId = receiptIdCounter++;
+        pendingReceipts[std::to_string(disconnectReceiptId)] = std::make_pair("logout", "");
+    
+        std::string disconnectFrame = generateDisconnectFrame(disconnectReceiptId);
         connectionHandler->sendFrameAscii(disconnectFrame, '\0');
+    
         return "";
     }
+    
+    
 
     std::cerr << "Unknown command: " << action << ". Type 'help' for usage.\n";
     return "";
@@ -151,7 +151,7 @@ std::string StompProtocol::generateSendFrame(const std::string& channel, const s
     std::ostringstream frame;
     frame << "SEND\n"
           << "destination:/" << channel << "\n"
-          << "content-type:text/plain\n\n"  // ✅ Ensures proper message format
+          << "content-type:text/plain\n\n" 
           << message << "\n\0";
     return frame.str();
 }
@@ -198,18 +198,15 @@ std::string StompProtocol::generateUnsubscribeFrame(const std::string& channel) 
     return frame.str();
 }
 
-std::string StompProtocol::generateDisconnectFrame() {
-    int receiptId = receiptIdCounter++;
-
+std::string StompProtocol::generateDisconnectFrame(int receiptId) {
     std::ostringstream frame;
     frame << "DISCONNECT\n"
           << "accept-version:1.2\n"  
-          << "receipt:" << receiptId << "\n\0";
-
-    pendingReceipts[std::to_string(receiptId)] = std::make_pair("logout", "");
+          << "receipt:" << receiptId << "\n\n\0";  // ✅ Fix null termination
 
     return frame.str();
 }
+
 
 
 
@@ -308,6 +305,16 @@ void StompProtocol::handleReceiptFrame(const std::unordered_map<std::string, std
         std::cout << "Exited channel " << channel << std::endl;
     } else if (action == "exit_logout") {
         subscriptions.erase(channel);
+        std::cout << "Exited channel " << channel << " (preparing for logout)" << std::endl;
+
+        // ✅ If all channels are unsubscribed, proceed with logout
+        if (subscriptions.empty()) {
+            std::cout << "All channels exited. Proceeding with logout..." << std::endl;
+            int disconnectReceiptId = receiptIdCounter++;
+            pendingReceipts[std::to_string(disconnectReceiptId)] = std::make_pair("logout", "");
+            std::string disconnectFrame = generateDisconnectFrame(disconnectReceiptId);
+            connectionHandler->sendFrameAscii(disconnectFrame, '\0');
+        }
     } else if (action == "logout") {
         std::cout << "Logged out" << std::endl; 
         resetState();
@@ -324,25 +331,36 @@ void StompProtocol::handleErrorFrame(const std::unordered_map<std::string, std::
     std::string body;
     std::getline(bodyStream, body, '\0');
 
-   
+    // ✅ Better error handling for specific cases
     if (errorMessage.find("Password does not match") != std::string::npos) {
         std::cout << "Wrong password" << std::endl;
     } else {
-        std::cerr << errorMessage << std::endl;
+        std::cerr << "Error: " << errorMessage << std::endl;
         if (!body.empty()) {
-            std::cerr << body << std::endl;
+            std::cerr << "Details: " << body << std::endl;
         }
     }
 
+    // ✅ Check for receipt ID and remove from pending receipts
     auto receiptIdIt = headers.find("receipt-id");
-    if (receiptIdIt != headers.end() && pendingReceipts.find(receiptIdIt->second) != pendingReceipts.end()) {
-        pendingReceipts.erase(receiptIdIt->second);
+    if (receiptIdIt != headers.end()) {
+        std::string receiptId = receiptIdIt->second;
+        pendingReceipts.erase(receiptId);
     }
 
-    // Disconnect only if it's a critical error
-    std::string frame = generateDisconnectFrame();
-    if (connectionHandler->sendFrameAscii(frame, '\0')) {
-        resetState();
+    // ✅ Only disconnect if it's a severe error
+    if (errorMessage.find("Server shutting down") != std::string::npos ||
+        errorMessage.find("Unauthorized") != std::string::npos) {
+        
+        if (connectionHandler) {
+            int disconnectReceiptId = receiptIdCounter++;
+            pendingReceipts[std::to_string(disconnectReceiptId)] = std::make_pair("logout", "");
+            
+            std::string frame = generateDisconnectFrame(disconnectReceiptId);
+            connectionHandler->sendFrameAscii(frame, '\0');
+
+            resetState();
+        }
     }
 }
 
@@ -452,7 +470,7 @@ void StompProtocol::handleSummaryCommand(const std::string& channel, const std::
     }
 
     outFile.close();
-    std::cout << "Summary successfully written to out.txt " << filePath << std::endl;  
+    std::cout << "Summary successfully written to " << filePath << std::endl;  
 }
 
 
