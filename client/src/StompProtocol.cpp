@@ -249,30 +249,25 @@ void StompProtocol::handleMessageFrame(const std::unordered_map<std::string, std
     if (destinationIt != headers.end()) {
         std::string channel = destinationIt->second;
 
-        // 🔹 Ensure channel format is consistent
+       
         if (!channel.empty() && channel[0] == '/' && channel[1] == '/') {
-            channel = channel.substr(1);  // Remove leading `/` to standardize
+            channel = channel.substr(1); 
         }
 
         std::string body;
         std::getline(bodyStream, body, '\0');
-
         Event event(body);
 
-        // 🔹 Print event details before storing
         std::cout << "Received event for channel: " << channel << "\n";
         std::cout << "Event Owner: " << event.getEventOwnerUser() << "\n";
         std::cout << "Event Name: " << event.get_name() << "\n";
         std::cout << "Event Date: " << event.get_date_time() << "\n";
 
-        // 🔹 Store event in `savedEvents`
         savedEvents[channel].push_back(event);
     } else {
         std::cerr << "Malformed MESSAGE frame: missing destination header" << std::endl;
     }
 }
-
-
 
 
 void StompProtocol::handleReceiptFrame(const std::unordered_map<std::string, std::string>& headers) {
