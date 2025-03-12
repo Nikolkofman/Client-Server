@@ -8,7 +8,7 @@
 #include <sstream>
 #include <cstring>
 
-#include "../include/keyboardInput.h"
+//#include "../include/keyboardInput.h"
 
 using namespace std;
 using json = nlohmann::json;
@@ -24,9 +24,12 @@ Event::~Event()
 {
 }
 
-void Event::setEventOwnerUser(std::string setEventOwnerUser) {
-    eventOwnerUser = setEventOwnerUser;
+void Event::setEventOwnerUser(std::string owner) {
+    owner.erase(0, owner.find_first_not_of(" \t\n\r\f\v"));  // Trim leading spaces
+    owner.erase(owner.find_last_not_of(" \t\n\r\f\v") + 1);  // Trim trailing spaces
+    eventOwnerUser = owner;
 }
+
 
 const std::string &Event::getEventOwnerUser() const {
     return eventOwnerUser;
@@ -61,6 +64,11 @@ const std::string &Event::get_description() const
 {
     return this->description;
 }
+
+void Event::setChannelName(const std::string& channel) {
+    channel_name = channel;
+}
+
 
 Event::Event(const std::string &frame_body): channel_name(""), city(""), 
                                              name(""), date_time(0), description(""), general_information(),

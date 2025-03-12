@@ -1,5 +1,9 @@
 #include "../include/ConnectionHandler.h"
 
+#include <iostream>
+#include <chrono>
+#include <thread>
+
 using boost::asio::ip::tcp;
 
 using std::cin;
@@ -74,6 +78,7 @@ bool ConnectionHandler::sendLine(std::string &line) {
 
 
 bool ConnectionHandler::getFrameAscii(std::string &frame, char delimiter) {
+	std::this_thread::sleep_for(std::chrono::milliseconds(500));
 	char ch;
 	// Stop when we encounter the null character.
 	// Notice that the null character is not appended to the frame string.

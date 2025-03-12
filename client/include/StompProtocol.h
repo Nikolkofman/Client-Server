@@ -20,11 +20,11 @@ public:
 
 
     // Frame creation methods
-    std::string createConnectFrame(const std::string& username, const std::string& password);
-    std::string createSubscribeFrame(const std::string& channel, int subscriptionId, int receiptId);
-    std::string createUnsubscribeFrame(const std::string& channel);
-    std::string createSendFrame(const std::string& channel, const std::string& message);
-    std::string createDisconnectFrame();
+    std::string generateConnectFrame(const std::string& username, const std::string& password);
+    std::string generateSubscribeFrame(const std::string& channel, int subscriptionId, int receiptId);
+    std::string generateUnsubscribeFrame(const std::string& channel);
+    std::string generateSendFrame(const std::string& channel, const std::string& message);
+    std::string generateDisconnectFrame(int receiptId);
     ConnectionHandler* getConnectionHandler();
     std::mutex& getConnectionMutex();
     // Frame parsing and dispatch
@@ -33,6 +33,7 @@ public:
     // Command processing
     std::string processCommand(const std::string& command);
     const std::string& getUsername() const;
+    
 
 private:
     // Frame handling methods
@@ -45,8 +46,11 @@ private:
     void handleSummaryCommand(const std::string& channel, const std::string& user, const std::string& filePath);
 
     std::string epoch_to_date(int epochTime);
+    static std::string trim(const std::string& str);
+    
 
     void resetState();
+    
 
     // Member variables
     std::unique_ptr<ConnectionHandler> connectionHandler;

@@ -54,6 +54,8 @@ const std::string& StompProtocol::getUsername() const {
     return loggedName;
 }
 
+
+
 std::string StompProtocol::processCommand(const std::string& command) {
     std::istringstream stream(command);
     std::string action;
@@ -130,7 +132,7 @@ std::string StompProtocol::processCommand(const std::string& command) {
             return "";
         }
     
-        // ✅ Generate a new receipt ID for DISCONNECT
+  
         int disconnectReceiptId = receiptIdCounter++;
         pendingReceipts[std::to_string(disconnectReceiptId)] = std::make_pair("logout", "");
     
