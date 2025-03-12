@@ -1,0 +1,47 @@
+#include "StompListener.h"
+#include <iostream>
+
+StompListener::StompListener(StompProtocol* protocol, std::mutex& connectionMutex)
+    : connectionMutex(connectionMutex), protocol(protocol), communicationThread() {}
+
+// Destructor
+StompListener::~StompListener() {
+    stop();
+}
+
+// Main network listening loop
+void StompListener::run() {
+    while (true) {
+        ConnectionHandler* connectionHandler = protocol->getConnectionHandler();
+        if (!connectionHandler) {
+            protocol->waitForConnection();
+            continue;
+        }
+        
+        std::string frame;
+        bool success = connectionHandler->getFrameAscii(frame, '\0');
+        if (!success) {
+            std::cerr << "Error reading frame from socket." << std::endl;
+            protocol->clearConnectionHandler();
+            continue;
+        }
+
+        try {
+            protocol->parseFrame(frame);
+        } catch (const std::exception& e) {
+            std::cerr << "Error parsing frame: " << e.what() << std::endl;
+        }
+    }
+}
+
+// Start network listener thread
+void StompListener::start() {
+    communicationThread = std::thread(&StompListener::run, this);
+}
+
+// Stop network listener thread
+void StompListener::stop() {
+    if (communicationThread.joinable()) {
+        communicationThread.join();
+    }
+}
