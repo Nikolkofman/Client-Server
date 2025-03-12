@@ -17,13 +17,12 @@ StompProtocol::StompProtocol()
 
 
 void StompProtocol::waitForConnection() {
-    std::unique_lock<std::mutex> lock(connectionMutex);  // Lock to protect connectionHandler
+    std::unique_lock<std::mutex> lock(connectionMutex);  
     connectionCV.wait(lock, [this] { return connectionHandler != nullptr; });
 }
 
 void StompProtocol::setConnectionHandler(const std::string& hostPort) {
-    // Parse the host and port from the string format "host:port"
-    std::lock_guard<std::mutex> lock(connectionMutex);  // Lock to protect connectionHandler
+    std::lock_guard<std::mutex> lock(connectionMutex);  
     
     if(connectionHandler != nullptr){
         return;
@@ -37,8 +36,6 @@ void StompProtocol::setConnectionHandler(const std::string& hostPort) {
     if(connectionHandler->connect()){
         connectionCV.notify_one();
     }
-    // Notify any waiting threads that the connection handler is now initialized
-    //connectionCV.notify_all();
 }
 
 void StompProtocol::clearConnectionHandler(){
@@ -79,21 +76,19 @@ std::string StompProtocol::processCommand(const std::string& command) {
         std::string channel;
         stream >> channel;
     
-        int receiptId = receiptIdCounter++;  // Generate a unique receipt ID
-        int subscriptionId = subscriptionIdCounter++;  // Generate a unique subscription ID
+        int receiptId = receiptIdCounter++;  
+        int subscriptionId = subscriptionIdCounter++;  
     
-        // Store the subscription info before sending
+       
         pendingReceipts[std::to_string(receiptId)] = std::make_pair("join", channel);
         subscriptions[channel] = subscriptionId;
     
-        // FIX: Call `createSubscribeFrame(channel, subscriptionId, receiptId)`
         std::string frame = createSubscribeFrame(channel, subscriptionId, receiptId);
     
-        connectionHandler->sendFrameAscii(frame, '\0');  // Send the frame
+        connectionHandler->sendFrameAscii(frame, '\0'); 
     
         return "";
     }
-    
     
     else if (action == "exit") {
         if (!isLoggedIn) {
@@ -140,14 +135,8 @@ std::string StompProtocol::processCommand(const std::string& command) {
             connectionHandler->sendFrameAscii(frame, '\0');
         }
     
-        // Create the disconnect frame
         std::string disconnectFrame = createDisconnectFrame(); 
-    
-        //std::cout << "Sending DISCONNECT frame:\n" << disconnectFrame << std::endl; 
-    
-        // Send the frame
         connectionHandler->sendFrameAscii(disconnectFrame, '\0');
-    
         return "";
     }
     
@@ -158,8 +147,7 @@ std::string StompProtocol::createSendFrame(const std::string& channel, const std
     std::ostringstream frame;
     frame << "SEND\n"
           << "destination:/" << channel << "\n"
-          << "content-type:text/plain\n\n"  // ✅ Ensures proper message format
-          << message << "\n\0";
+          << "content-type:text/plain\n\n"  
     return frame.str();
 }
 
