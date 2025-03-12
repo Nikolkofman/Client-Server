@@ -3,10 +3,10 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
-#include "../include/keyboardInput.h"
+#include "../include/UserInputHandler.h"
 #include "../include/StompProtocol.h"
 #include "../include/ConnectionHandler.h"
-#include "../include/CommunicationHandler.h"
+#include "../include/StompListener.h"
 
 // Global synchronization objects
 std::mutex mutex;
@@ -15,11 +15,11 @@ std::mutex mutex;
 int main() {
     std::unique_ptr<StompProtocol> protocol(new StompProtocol());
 
-    KeyboardHandler keyboardHandler(protocol.get(), protocol->getConnectionMutex());
-    CommunicationHandler communicationHandler(protocol.get(), protocol->getConnectionMutex());
+    UserInputHandler UserInputHandler(protocol.get(), protocol->getConnectionMutex());
+    StompListener StompListener(protocol.get(), protocol->getConnectionMutex());
 
-    keyboardHandler.start();
-    communicationHandler.start();
+    UserInputHandler.start();
+    StompListener.start();
 
     return 0;
 }
