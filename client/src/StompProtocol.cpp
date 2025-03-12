@@ -31,7 +31,7 @@ void StompProtocol::setConnectionHandler(const std::string& hostPort) {
     size_t colonPos = hostPort.find(':');
     std::string host = hostPort.substr(0, colonPos);
     int port = std::stoi(hostPort.substr(colonPos + 1));
-    std::cout<<"port: "<<port << " host:"<< host  << " hl "<< host.length()<<  std::endl;
+   
     // Initialize the connectionHandler object with the provided host and port
     connectionHandler = std::unique_ptr<ConnectionHandler>(new ConnectionHandler(host, port));
     if(connectionHandler->connect()){
@@ -470,23 +470,32 @@ void StompProtocol::handleSummaryCommand(const std::string& channel, const std::
 
     // Write formatted summary output
     outFile << "Channel " << formattedChannel << "\n"
-            << "Stats:\n"
-            << "Total: " << filteredEvents.size() << "\n"
-            << "active: " << std::count_if(filteredEvents.begin(), filteredEvents.end(), 
-                           [](const Event& e){ return e.get_general_information().at("active") == "true"; }) << "\n"
-            << "forces arrival at scene: " << std::count_if(filteredEvents.begin(), filteredEvents.end(), 
-                           [](const Event& e){ return e.get_general_information().at("forces_arrival_at_scene") == "true"; }) << "\n\n";
+    << "Stats:\n"
+    << "  Total: " << filteredEvents.size() << "\n"
+    << "  active: " << std::count_if(filteredEvents.begin(), filteredEvents.end(), 
+                [](const Event& e) { 
+                    auto info = e.get_general_information();
+                    return info.find("active") != info.end() && trim(info.at("active")) == "true"; 
+                }) << "\n"
+    << "  forces arrival at scene: " << std::count_if(filteredEvents.begin(), filteredEvents.end(), 
+                [](const Event& e) { 
+                    auto info = e.get_general_information();
+                    return info.find("forces_arrival_at_scene") != info.end() && trim(info.at("forces_arrival_at_scene")) == "true"; 
+                }) << "\n\n";
 
-    outFile << "Event Reports:\n";
+    outFile << "Event Reports:\n\n";
     for (size_t i = 0; i < filteredEvents.size(); i++) {
-        const Event& event = filteredEvents[i];
+    const Event& event = filteredEvents[i];
 
-        outFile << "Report_" << (i + 1) << ":\n"
-                << "\tcity: " << event.get_city() << "\n"
-                << "\tdate time: " << epoch_to_date(event.get_date_time()) << "\n"
-                << "\tevent name: " << event.get_name() << "\n"
-                << "\tsummary: " << (event.get_description().size() > 27 ? event.get_description().substr(0, 27) + "..." : event.get_description()) << "\n\n";
+    outFile << "Report_" << (i + 1) << ":\n"
+        << "  city: " << event.get_city() << "\n"
+        << "  date time: " << epoch_to_date(event.get_date_time()) << "\n"
+        << "  event name: " << event.get_name() << "\n"
+        << "  summary: " 
+        << (event.get_description().size() > 27 ? event.get_description().substr(0, 27) + "..." : event.get_description()) 
+        << "\n\n";
     }
+
 
     outFile.close();
     std::cout << "Summary successfully written to " << filePath << "\n";
