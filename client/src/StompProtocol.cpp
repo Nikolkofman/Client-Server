@@ -187,7 +187,6 @@ std::string StompProtocol::generateUnsubscribeFrame(const std::string& channel) 
           << "id:" << subscriptionId << "\n"
           << "receipt:" << receiptId << "\n\n\0";
 
-    
     return frame.str();
 }
 
@@ -233,7 +232,7 @@ void StompProtocol::parseFrame(const std::string& frame) {
     }
 }
 
-
+//Connect frame
 void StompProtocol::handleConnectedFrame(const std::unordered_map<std::string, std::string>& headers) {
     auto versionIt = headers.find("version");
     if (versionIt != headers.end()) {
@@ -243,6 +242,8 @@ void StompProtocol::handleConnectedFrame(const std::unordered_map<std::string, s
         throw std::runtime_error("Malformed CONNECTED frame: missing version header");
     }
 }
+
+//Message frame
 void StompProtocol::handleMessageFrame(const std::unordered_map<std::string, std::string>& headers, std::istringstream& bodyStream) {
     auto destinationIt = headers.find("destination");
     if (destinationIt != headers.end()) {
