@@ -367,10 +367,8 @@ void StompProtocol::handleReport(const std::string& filePath) {
         std::string frame = generateSendFrame("/" + channel_name, body.str());
         connectionHandler->sendFrameAscii(frame, '\0');
     }
-    std::cout << "Reported successfully!" << std::endl;
+    std::cout << "Reported" << std::endl;
 }
-
-
 
 void StompProtocol::handleSummary(const std::string& channel, const std::string& user, const std::string& filePath) {
     std::ofstream outFile(filePath, std::ios::trunc);
@@ -388,32 +386,14 @@ void StompProtocol::handleSummary(const std::string& channel, const std::string&
         }
     }
     
-
     auto channelIt = savedEvents.find(formattedChannel);
     if (channelIt == savedEvents.end()) {
-        outFile << "No events found for channel: " << formattedChannel << "\n";
         outFile << "No events found for channel: " << formattedChannel << "\n";
         outFile.close();
         return;
     }
 
-    // Debug: Print all events before filtering
-    std::cout << "[DEBUG] Events before filtering for summary: \n";
-    for (const auto& event : channelIt->second) {
-        std::cout << "  Owner: " << event.getEventOwnerUser() << ", Name: " << event.get_name() << "\n";
-    }
-
-      // 🔍 Debug Print: Show All Stored Events Before Filtering
-      std::cout << "Checking stored events for channel: " << formattedChannel << "\n";
-      for (const auto& event : savedEvents[formattedChannel]) {
-          std::cout << "Event Owner: " << event.getEventOwnerUser() 
-                    << ", Event Name: " << event.get_name() 
-                    << ", Channel: " << event.get_channel_name() << "\n";
-      }
-
     const std::vector<Event>& events = channelIt->second;
-
-    // 🔹 Filter events only for the requested user (oren)
     std::vector<Event> filteredEvents;
     for (const Event& event : events) {
         if (event.getEventOwnerUser() == user) {
@@ -422,25 +402,16 @@ void StompProtocol::handleSummary(const std::string& channel, const std::string&
     }
 
     if (filteredEvents.empty()) {
-        std::cerr << "[DEBUG] No events found from user: " << user << " on channel: " << formattedChannel << "\n";
         outFile << "No events found from user: " << user << " on channel: " << formattedChannel << "\n";
         outFile.close();
         return;
     }
 
-    // Debug: Print filtered events before writing summary
-    std::cout << "[DEBUG] Filtered events for summary: \n";
-    for (const auto& event : filteredEvents) {
-        std::cout << "  Name: " << event.get_name() << ", Date: " << event.get_date_time() << "\n";
-    }
-
-    // 🔹 Sort events by time, then by event name lexicographically
     std::sort(filteredEvents.begin(), filteredEvents.end(), [](const Event& a, const Event& b) {
         return (a.get_date_time() < b.get_date_time()) || 
                (a.get_date_time() == b.get_date_time() && a.get_name() < b.get_name());
     });
 
-    // 🔹 Write formatted summary output
     outFile << "Channel " << formattedChannel << "\n"
             << "Stats:\n"
             << "Total: " << filteredEvents.size() << "\n"
@@ -459,10 +430,10 @@ void StompProtocol::handleSummary(const std::string& channel, const std::string&
                 << "\tevent name: " << event.get_name() << "\n"
                 << "\tsummary: " << event.get_description().substr(0, 27) << "...\n\n";
     }
-
     outFile.close();
     std::cout << "Summary successfully written to " << filePath << "\n";
 }
+
 
 
 std::string StompProtocol::epoch_to_date(int epochTime) {
