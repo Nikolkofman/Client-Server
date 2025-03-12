@@ -278,8 +278,7 @@ void StompProtocol::handleReceiptFrame(const std::unordered_map<std::string, std
     }
 
     std::string receiptID = receiptIdIt->second;
-    //std::cout << "Received RECEIPT ID: " << receiptID << std::endl;
-    
+  
     if (pendingReceipts.find(receiptID) == pendingReceipts.end()) {
         std::cerr << "Warning: RECEIPT ID " << receiptID << " not found in pendingReceipts!" << std::endl;
         
@@ -288,8 +287,7 @@ void StompProtocol::handleReceiptFrame(const std::unordered_map<std::string, std
         for (const auto& entry : pendingReceipts) {
             std::cerr << entry.first << " ";
         }
-        std::cerr << std::endl;
-        
+        std::cerr << std::endl; 
         return;
     }
     
@@ -320,7 +318,6 @@ void StompProtocol::handleErrorFrame(const std::unordered_map<std::string, std::
     std::string body;
     std::getline(bodyStream, body, '\0');
 
-    // Print only "Wrong password" if the error is password-related
     if (errorMessage.find("Password does not match") != std::string::npos) {
         std::cout << "Wrong password" << std::endl;
     } else {
@@ -330,13 +327,11 @@ void StompProtocol::handleErrorFrame(const std::unordered_map<std::string, std::
         }
     }
 
-    // Cleanup pending receipts if necessary
     auto receiptIdIt = headers.find("receipt-id");
     if (receiptIdIt != headers.end() && pendingReceipts.find(receiptIdIt->second) != pendingReceipts.end()) {
         pendingReceipts.erase(receiptIdIt->second);
     }
 
-    // Disconnect only if it's a critical error
     std::string frame = generateDisconnectFrame();
     if (connectionHandler->sendFrameAscii(frame, '\0')) {
         resetState();
