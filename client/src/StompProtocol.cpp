@@ -264,18 +264,29 @@ void StompProtocol::handleMessageFrame(const std::unordered_map<std::string, std
     if (destinationIt != headers.end()) {
         std::string channel = destinationIt->second;
 
+        // 🔹 Ensure channel format is consistent
+        if (!channel.empty() && channel[0] == '/' && channel[1] == '/') {
+            channel = channel.substr(1);  // Remove leading `/` to standardize
+        }
 
         std::string body;
         std::getline(bodyStream, body, '\0');
 
         Event event(body);
 
-       
+        // 🔹 Print event details before storing
+        std::cout << "Received event for channel: " << channel << "\n";
+        std::cout << "Event Owner: " << event.getEventOwnerUser() << "\n";
+        std::cout << "Event Name: " << event.get_name() << "\n";
+        std::cout << "Event Date: " << event.get_date_time() << "\n";
+
+        // 🔹 Store event in `savedEvents`
         savedEvents[channel].push_back(event);
     } else {
         std::cerr << "Malformed MESSAGE frame: missing destination header" << std::endl;
     }
 }
+
 
 
 
@@ -353,32 +364,18 @@ void StompProtocol::handleErrorFrame(const std::unordered_map<std::string, std::
 }
 
 void StompProtocol::handleReportCommand(const std::string& filePath) {
-    // Parse the JSON file
     names_and_events parsedData = parseEventsFile(filePath);
     std::string channel_name = parsedData.channel_name;
 
-    // // 🔹 Ensure the correct channel format (avoid double slashes)
-    // if (channel_name[0] != '/') {
-    //     channel_name = "/" + channel_name;
-    // }
-
     if (subscriptions.find(channel_name) == subscriptions.end()) {
         std::cerr << "Error: You are not subscribed to channel [" << channel_name << "]" << std::endl;
-        
-        // Print all subscribed channels for debugging
-        std::cerr << "Currently subscribed channels: ";
-        for (const auto& sub : subscriptions) {
-            std::cerr << sub.first << " ";
-        }
-        std::cerr << std::endl;
-        
         return;
     }
-    
 
     const std::vector<Event>& events = parsedData.events;
-    for (const Event& event : events) {
-         savedEvents[channel_name].push_back(event);  // ✅ Store in `savedEvents`
+    for (Event event : events) {  
+        event.setEventOwnerUser(loggedName);
+        savedEvents[channel_name].push_back(event);
 
         std::ostringstream body;
         body << "user: " << loggedName << "\n"
@@ -390,23 +387,12 @@ void StompProtocol::handleReportCommand(const std::string& filePath) {
         for (const auto& [key, value] : event.get_general_information()) {
             body << "\t" << key << ": " << value << "\n";
         }
-
         body << "description:\n" << event.get_description() << "\n";
 
-        std::string formattedChannel = "/" + channel_name;  // ✅ Ensure it has the correct STOMP format
-        std::string frame = createSendFrame(formattedChannel, body.str());
-
-
-        {
-            std::lock_guard<std::mutex> lock(connectionMutex);
-            if (!connectionHandler->sendFrameAscii(frame, '\0')) {
-                std::cerr << "Failed to send event to channel: " << channel_name << std::endl;
-                return;
-            }
-        }
+        std::string frame = createSendFrame("/" + channel_name, body.str());
+        connectionHandler->sendFrameAscii(frame, '\0');
     }
-
-    std::cout << "Reported" << std::endl;
+    std::cout << "Reported successfully!" << std::endl;
 }
 
 
@@ -416,79 +402,93 @@ void StompProtocol::handleSummaryCommand(const std::string& channel, const std::
     if (!outFile.is_open()) {
         std::cerr << "Error: Could not create file " << filePath << std::endl;
         return;
-    } else {
-        std::cout << "File " << filePath << " created successfully." << std::endl;
+    }
+
+    std::string formattedChannel = channel;
+    if (savedEvents.find(channel) == savedEvents.end()) {
+        if (savedEvents.find("/" + channel) != savedEvents.end()) {
+            formattedChannel = "/" + channel;
+        } else if (savedEvents.find("//" + channel) != savedEvents.end()) {
+            formattedChannel = "//" + channel;
+        }
     }
     
 
-    // Check if the channel exists in savedEvents
-    auto channelIt = savedEvents.find(channel);
+    auto channelIt = savedEvents.find(formattedChannel);
     if (channelIt == savedEvents.end()) {
-        outFile << "No events found for channel: " << channel << "\n";
+        outFile << "No events found for channel: " << formattedChannel << "\n";
+        outFile << "No events found for channel: " << formattedChannel << "\n";
         outFile.close();
         return;
     }
+
+    // Debug: Print all events before filtering
+    std::cout << "[DEBUG] Events before filtering for summary: \n";
+    for (const auto& event : channelIt->second) {
+        std::cout << "  Owner: " << event.getEventOwnerUser() << ", Name: " << event.get_name() << "\n";
+    }
+
+      // 🔍 Debug Print: Show All Stored Events Before Filtering
+      std::cout << "Checking stored events for channel: " << formattedChannel << "\n";
+      for (const auto& event : savedEvents[formattedChannel]) {
+          std::cout << "Event Owner: " << event.getEventOwnerUser() 
+                    << ", Event Name: " << event.get_name() 
+                    << ", Channel: " << event.get_channel_name() << "\n";
+      }
 
     const std::vector<Event>& events = channelIt->second;
 
-    // Filter events for the specific user
+    // 🔹 Filter events only for the requested user (oren)
     std::vector<Event> filteredEvents;
-    std::copy_if(events.begin(), events.end(), std::back_inserter(filteredEvents),
-                 [&user](const Event& event) { return event.getEventOwnerUser() == user; });
+    for (const Event& event : events) {
+        if (event.getEventOwnerUser() == user) {
+            filteredEvents.push_back(event);
+        }
+    }
 
     if (filteredEvents.empty()) {
-        outFile << "No events found from user: " << user << " on channel: " << channel << "\n";
+        std::cerr << "[DEBUG] No events found from user: " << user << " on channel: " << formattedChannel << "\n";
+        outFile << "No events found from user: " << user << " on channel: " << formattedChannel << "\n";
         outFile.close();
         return;
     }
 
-    // Sort by date time, then by event name
-    std::sort(filteredEvents.begin(), filteredEvents.end(),
-        [](const Event& a, const Event& b) {
-        if (a.get_date_time() != b.get_date_time()) {
-            return a.get_date_time() < b.get_date_time();
-        }
-        return a.get_name() < b.get_name();
-    });
-
-    int totalReports = filteredEvents.size();
-    int activeCount = 0;
-    int forcesArrivalCount = 0;
-
-    for (const Event& event : filteredEvents) {
-        const auto& generalInfo = event.get_general_information();
-        if (generalInfo.count("active") && generalInfo.at("active") == "true") {
-            activeCount++;
-        }
-        if (generalInfo.count("forces_arrival_at_scene") && generalInfo.at("forces_arrival_at_scene") == "true") {
-            forcesArrivalCount++;
-        }
+    // Debug: Print filtered events before writing summary
+    std::cout << "[DEBUG] Filtered events for summary: \n";
+    for (const auto& event : filteredEvents) {
+        std::cout << "  Name: " << event.get_name() << ", Date: " << event.get_date_time() << "\n";
     }
 
-    // Write summary to file
-    outFile << "Channel " << channel << "\n"
+    // 🔹 Sort events by time, then by event name lexicographically
+    std::sort(filteredEvents.begin(), filteredEvents.end(), [](const Event& a, const Event& b) {
+        return (a.get_date_time() < b.get_date_time()) || 
+               (a.get_date_time() == b.get_date_time() && a.get_name() < b.get_name());
+    });
+
+    // 🔹 Write formatted summary output
+    outFile << "Channel " << formattedChannel << "\n"
             << "Stats:\n"
-            << "Total: " << totalReports << "\n"
-            << "active: " << activeCount << "\n"
-            << "forces arrival at scene: " << forcesArrivalCount << "\n\n";
+            << "Total: " << filteredEvents.size() << "\n"
+            << "active: " << std::count_if(filteredEvents.begin(), filteredEvents.end(), 
+                           [](const Event& e){ return e.get_general_information().at("active") == "true"; }) << "\n"
+            << "forces arrival at scene: " << std::count_if(filteredEvents.begin(), filteredEvents.end(), 
+                           [](const Event& e){ return e.get_general_information().at("forces_arrival_at_scene") == "true"; }) << "\n\n";
 
     outFile << "Event Reports:\n";
     for (size_t i = 0; i < filteredEvents.size(); i++) {
         const Event& event = filteredEvents[i];
-        std::string summary = event.get_description().substr(0, 27);
-        if (event.get_description().length() > 27) {
-            summary += "...";
-        }
 
-        outFile << "Report_" << (i+1) << ":\n"
+        outFile << "Report_" << (i + 1) << ":\n"
                 << "\tcity: " << event.get_city() << "\n"
                 << "\tdate time: " << epoch_to_date(event.get_date_time()) << "\n"
                 << "\tevent name: " << event.get_name() << "\n"
-                << "\tsummary: " << summary << "\n\n";
+                << "\tsummary: " << event.get_description().substr(0, 27) << "...\n\n";
     }
 
     outFile.close();
+    std::cout << "Summary successfully written to " << filePath << "\n";
 }
+
 
 std::string StompProtocol::epoch_to_date(int epochTime) {
     std::time_t time = static_cast<std::time_t>(epochTime);
