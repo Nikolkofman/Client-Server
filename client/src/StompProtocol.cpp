@@ -65,11 +65,11 @@ std::string StompProtocol::processCommand(const std::string& command) {
         stream >> port >> username >> password;
         loggedName = username;
         setConnectionHandler(port);
-        return createConnectFrame(username, password);
+        return generateConnectFrame(username, password);
     } 
     else if (action == "join") {
         if (!isLoggedIn) {
-            std::cerr << "Please login first." << std::endl;
+            std::cerr << "Please login first" << std::endl;
             return "";
         }
         
@@ -83,7 +83,7 @@ std::string StompProtocol::processCommand(const std::string& command) {
         pendingReceipts[std::to_string(receiptId)] = std::make_pair("join", channel);
         subscriptions[channel] = subscriptionId;
     
-        std::string frame = createSubscribeFrame(channel, subscriptionId, receiptId);
+        std::string frame = generateSubscribeFrame(channel, subscriptionId, receiptId);
     
         connectionHandler->sendFrameAscii(frame, '\0'); 
     
@@ -99,7 +99,7 @@ std::string StompProtocol::processCommand(const std::string& command) {
         stream >> channel;
         int receiptId = receiptIdCounter++;
         pendingReceipts[std::to_string(receiptId)] = std::make_pair("unsubscribe", channel);
-        return createUnsubscribeFrame(channel);
+        return generateUnsubscribeFrame(channel);
     }  
     else if (action == "report") {
         if (!isLoggedIn) {
@@ -108,7 +108,7 @@ std::string StompProtocol::processCommand(const std::string& command) {
         }
         std::string filePath;
         stream >> filePath;
-        handleReportCommand(filePath);
+        handleReport(filePath);
         return "";
     } 
     else if (action == "summary") {
@@ -118,7 +118,7 @@ std::string StompProtocol::processCommand(const std::string& command) {
         }
         std::string channel, user, filePath;
         stream >> channel >> user >> filePath;
-        handleSummaryCommand(channel, user, filePath);
+        handleSummary(channel, user, filePath);
         return "";
     } 
     else if (action == "logout") {
@@ -131,11 +131,11 @@ std::string StompProtocol::processCommand(const std::string& command) {
         for (const auto& subscription : subscriptions) {
             int receiptId = receiptIdCounter++;
             pendingReceipts[std::to_string(receiptId)] = std::make_pair("exit_logout", subscription.first);
-            std::string frame = createUnsubscribeFrame(subscription.first);
+            std::string frame = generateUnsubscribeFrame(subscription.first);
             connectionHandler->sendFrameAscii(frame, '\0');
         }
     
-        std::string disconnectFrame = createDisconnectFrame(); 
+        std::string disconnectFrame = generateDisconnectFrame(); 
         connectionHandler->sendFrameAscii(disconnectFrame, '\0');
         return "";
     }
@@ -143,18 +143,16 @@ std::string StompProtocol::processCommand(const std::string& command) {
     return "";
 }
 
-std::string StompProtocol::createSendFrame(const std::string& channel, const std::string& message) {
+std::string StompProtocol::generateSendFrame(const std::string& channel, const std::string& message) {
     std::ostringstream frame;
     frame << "SEND\n"
           << "destination:/" << channel << "\n"
           << "content-type:text/plain\n\n"  
+          << message << "\n\0";
     return frame.str();
 }
 
-
-
-
-std::string StompProtocol::createSubscribeFrame(const std::string& channel, int subscriptionId, int receiptId) {
+std::string StompProtocol::generateSubscribeFrame(const std::string& channel, int subscriptionId, int receiptId) {
     std::ostringstream frame;
     frame << "SUBSCRIBE\n"
           << "destination:/" << channel << "\n"
@@ -165,7 +163,7 @@ std::string StompProtocol::createSubscribeFrame(const std::string& channel, int 
 }
 
 
-std::string StompProtocol::createConnectFrame(const std::string& username, const std::string& password) {
+std::string StompProtocol::generateConnectFrame(const std::string& username, const std::string& password) {
     std::ostringstream frame;
     frame << "CONNECT\n"
           << "accept-version:1.2\n"
@@ -176,7 +174,7 @@ std::string StompProtocol::createConnectFrame(const std::string& username, const
     return frame.str();
 }
 
-std::string StompProtocol::createUnsubscribeFrame(const std::string& channel) {
+std::string StompProtocol::generateUnsubscribeFrame(const std::string& channel) {
     if (subscriptions.find(channel) == subscriptions.end()) {
         throw std::runtime_error("Channel not subscribed: " + channel);
     }
@@ -193,7 +191,7 @@ std::string StompProtocol::createUnsubscribeFrame(const std::string& channel) {
     return frame.str();
 }
 
-std::string StompProtocol::createDisconnectFrame() {
+std::string StompProtocol::generateDisconnectFrame() {
     int receiptId = receiptIdCounter++;
 
     std::ostringstream frame;
@@ -205,8 +203,6 @@ std::string StompProtocol::createDisconnectFrame() {
 
     return frame.str();
 }
-
-
 
 
 void StompProtocol::parseFrame(const std::string& frame) {
@@ -345,13 +341,13 @@ void StompProtocol::handleErrorFrame(const std::unordered_map<std::string, std::
     }
 
     // Disconnect only if it's a critical error
-    std::string frame = createDisconnectFrame();
+    std::string frame = generateDisconnectFrame();
     if (connectionHandler->sendFrameAscii(frame, '\0')) {
         resetState();
     }
 }
 
-void StompProtocol::handleReportCommand(const std::string& filePath) {
+void StompProtocol::handleReport(const std::string& filePath) {
     names_and_events parsedData = parseEventsFile(filePath);
     std::string channel_name = parsedData.channel_name;
 
@@ -377,7 +373,7 @@ void StompProtocol::handleReportCommand(const std::string& filePath) {
         }
         body << "description:\n" << event.get_description() << "\n";
 
-        std::string frame = createSendFrame("/" + channel_name, body.str());
+        std::string frame = generateSendFrame("/" + channel_name, body.str());
         connectionHandler->sendFrameAscii(frame, '\0');
     }
     std::cout << "Reported successfully!" << std::endl;
@@ -385,7 +381,7 @@ void StompProtocol::handleReportCommand(const std::string& filePath) {
 
 
 
-void StompProtocol::handleSummaryCommand(const std::string& channel, const std::string& user, const std::string& filePath) {
+void StompProtocol::handleSummary(const std::string& channel, const std::string& user, const std::string& filePath) {
     std::ofstream outFile(filePath, std::ios::trunc);
     if (!outFile.is_open()) {
         std::cerr << "Error: Could not create file " << filePath << std::endl;
