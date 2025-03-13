@@ -57,4 +57,68 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
     }
 
 
+    @Override
+    public boolean shouldTerminate() {
+        return shouldTerminate;
+    }
+
+    
+    private void handleErrorResponse(String response) {
+        try {
+            ConnectionHandler<String> handler = connections.retrieveConnectionHandler(connectionId);
+            if (handler != null) {
+                handler.send(response);
+                if (!response.contains("User already logged in")) {
+                    connections.handleUserLogout(connectionId);
+                }
+                connections.disconnect(connectionId);
+                handler.close();
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+  
+    private String processConnect(Map<String, String> headers) {
+        String username = headers.get("login");
+        String password = headers.get("passcode");
+
+        if (username == null || password == null) {
+            return sendError("Missing login credentials", "CONNECT");
+        }
+
+        if (connections == null) {
+            return sendError("Server error: Connections object is null", "CONNECT");
+        }
+
+        if (connections.checkUserExists(username)) {
+            if (connections.isValidLogin(username, password)) {
+                if (connections.isUserLoggedIn(username, password)) {
+                    return sendError("User already logged in", "CONNECT");
+                }
+                connections.handleUserLogin(connectionId, username, password);
+                return sendConnected();
+            }
+            return sendError("Invalid login credentials", "CONNECT");
+        }
+
+        
+        connections.handleUserLogin(connectionId, username, password);
+        return sendConnected();
+    }
+
+    
+    private String processSubscribe(Map<String, String> headers) {
+        String channel = headers.get("destination");
+        String subscriptionId = headers.get("id");
+
+        if (channel == null || subscriptionId == null) {
+            return sendError("Missing destination or subscription ID", "SUBSCRIBE");
+        }
+
+        connections.addSubscription(channel, connectionId, Integer.parseInt(subscriptionId));
+        return sendReceipt(headers.get("receipt"));
+    }
+
 }
