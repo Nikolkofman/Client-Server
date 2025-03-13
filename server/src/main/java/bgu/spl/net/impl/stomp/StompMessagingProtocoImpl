@@ -1,0 +1,60 @@
+package bgu.spl.net.impl.stomp;
+
+import bgu.spl.net.api.StompMessagingProtocol;
+import bgu.spl.net.srv.ConnectionHandler;
+import bgu.spl.net.srv.Connections;
+
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
+
+public class StompMessagingProtocolImpl implements StompMessagingProtocol<String> {
+    private int connectionId;
+    private Connections<String> connections;
+    private boolean shouldTerminate = false;
+
+    public StompMessagingProtocolImpl(Connections<String> connections) {
+        this.connections = connections;
+    }
+
+    @Override
+    public void start(int connectionId, Connections<String> connections) {
+        this.connectionId = connectionId;
+        this.connections = connections;
+    }
+
+   @Override
+    public String process(String message) {
+        if (message == null || message.isBlank()) {
+            return sendError("Empty or null message received", "UNKNOWN");
+        }
+
+        Map<String, String> headers = parseHeaders(message);
+        String command = extractCommand(message);
+        String body = extractBody(message);
+        String response = null;
+
+        if ("CONNECT".equals(command)) {
+            response = processConnect(headers);
+        } else if ("SUBSCRIBE".equals(command)) {
+            response = processSubscribe(headers);
+        } else if ("UNSUBSCRIBE".equals(command)) {
+            response = processUnsubscribe(headers);
+        } else if ("SEND".equals(command)) {
+            response = processSend(headers, body);
+        } else if ("DISCONNECT".equals(command)) {
+            response = processDisconnect(headers);
+        } else {
+            response = sendError("Unknown STOMP command: " + command, message);
+        }
+
+        if (response != null && response.startsWith("ERROR")) {
+            handleErrorResponse(response);
+            response = null;
+        }
+
+        return response;
+    }
+
+
+}
