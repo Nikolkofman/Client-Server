@@ -24,6 +24,7 @@ public class NonBlockingConnectionHandler<T> implements ConnectionHandler<T> {
     private final Reactor reactor;
     private final int connectionId;
 
+    @SuppressWarnings("unchecked")
     public NonBlockingConnectionHandler(
             MessageEncoderDecoder<T> reader,
             MessagingProtocol<T> protocol,
@@ -36,10 +37,11 @@ public class NonBlockingConnectionHandler<T> implements ConnectionHandler<T> {
         this.reactor = reactor;
         this.connectionId = connectionId;
 
-        // Safe casting
         if (protocol instanceof StompMessagingProtocol) {
-            StompMessagingProtocol<T> StompMessagingProtocolImpl = (StompMessagingProtocol<T>) protocol;
-            StompMessagingProtocolImpl.start(connectionId, (Connections<T>) ConnectionsImpl.getInstance(), this);
+            StompMessagingProtocol<T> stompProtocol = (StompMessagingProtocol<T>) protocol;
+            Connections<T> connections = (Connections<T>) ConnectionsImpl.getInstance();
+            stompProtocol.start(connectionId, connections, this);
+        
         } else {
             throw new IllegalArgumentException("Invalid protocol type: Expected StompMessagingProtocol");
         }

@@ -3,7 +3,7 @@ package bgu.spl.net.srv;
 import bgu.spl.net.api.MessageEncoderDecoder;
 import bgu.spl.net.api.MessagingProtocol;
 import bgu.spl.net.api.StompMessagingProtocol;
-import bgu.spl.net.srv.ConnectionsImpl;
+import bgu.spl.net.srv.*;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -20,6 +20,7 @@ public class BlockingConnectionHandler<T> implements Runnable, ConnectionHandler
     private volatile boolean connected = true;
     private final int connectionId;
 
+    @SuppressWarnings("unchecked")
     public BlockingConnectionHandler(Socket sock, MessageEncoderDecoder<T> reader, MessagingProtocol<T> protocol, int connectionId) {
         this.sock = sock;
         this.encdec = reader;
@@ -27,8 +28,9 @@ public class BlockingConnectionHandler<T> implements Runnable, ConnectionHandler
         this.connectionId = connectionId;
 
         if (protocol instanceof StompMessagingProtocol) {
-            StompMessagingProtocol<T> StompMessagingProtocolImpl = (StompMessagingProtocol<T>) protocol;
-            StompMessagingProtocolImpl.start(connectionId, (Connections<T>) ConnectionsImpl.getInstance(), this);
+            StompMessagingProtocol<T> stompProtocol = (StompMessagingProtocol<T>) protocol;
+            Connections<T> connections = (Connections<T>) ConnectionsImpl.getInstance();
+            stompProtocol.start(connectionId, connections, this);  
         } else {
             throw new IllegalArgumentException("Invalid protocol type: Expected StompMessagingProtocol");
         }

@@ -7,18 +7,12 @@ import java.util.Set;
 import java.util.LinkedHashMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
-/**
- * Manages connections and subscriptions for STOMP clients.
- */
+
 public class ConnectionsImpl implements Connections<String> {
 
-    // Stores active clients: connectionId → ConnectionHandler
+
     private final ConcurrentHashMap<Integer, ConnectionHandler<String>> clientHandlers;
-
-    // Stores subscribers per channel: channel → sorted set of connection IDs
     private final ConcurrentHashMap<String, Set<Integer>> subscribersByChannel;
-
-    // Stores client subscriptions: connectionId → (channel → subscriptionId) [Maintains insertion order]
     private final ConcurrentHashMap<Integer, Map<String, String>> subscriptionsByClient;
 
     // Read-Write Lock for handling client connection updates safely
@@ -30,14 +24,11 @@ public class ConnectionsImpl implements Connections<String> {
         this.subscriptionsByClient = new ConcurrentHashMap<>();
     }
 
-    // Singleton instance holder
+
     private static class Holder {
         private static final ConnectionsImpl INSTANCE = new ConnectionsImpl();
     }
 
-    /**
-     * Returns the singleton instance of ConnectionsImpl.
-     */
     public static ConnectionsImpl getInstance() {
         return Holder.INSTANCE;
     }
@@ -124,6 +115,24 @@ public class ConnectionsImpl implements Connections<String> {
     }
 
     @Override
+    public String findChannelBySubscription(int connectionId, String subscriptionId) {
+        lock.readLock().lock();
+        try {
+            Map<String, String> clientSubscriptions = subscriptionsByClient.get(connectionId);
+            if (clientSubscriptions != null) {
+                for (Map.Entry<String, String> entry : clientSubscriptions.entrySet()) {
+                    if (entry.getValue().equals(subscriptionId)) {
+                        return entry.getKey();
+                    }
+                }
+            }
+            return "";
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    @Override
     public String getClientSubscriptionId(int connectionId, String channel) {
         lock.readLock().lock();
         try {
@@ -148,21 +157,5 @@ public class ConnectionsImpl implements Connections<String> {
         }
     }
 
-    @Override
-    public String findChannelBySubscription(int connectionId, String subscriptionId) {
-        lock.readLock().lock();
-        try {
-            Map<String, String> clientSubscriptions = subscriptionsByClient.get(connectionId);
-            if (clientSubscriptions != null) {
-                for (Map.Entry<String, String> entry : clientSubscriptions.entrySet()) {
-                    if (entry.getValue().equals(subscriptionId)) {
-                        return entry.getKey();
-                    }
-                }
-            }
-            return "";
-        } finally {
-            lock.readLock().unlock();
-        }
-    }
+  
 }
