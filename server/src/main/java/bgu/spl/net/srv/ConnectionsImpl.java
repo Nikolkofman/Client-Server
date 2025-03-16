@@ -1,192 +1,168 @@
 package bgu.spl.net.srv;
 
-import java.util.LinkedList;
-import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.ConcurrentSkipListSet;
+import java.util.Map;
+import java.util.Set;
+import java.util.LinkedHashMap;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
-public class ConnectionsImpl<T> implements Connections<T> {
-    private final AtomicInteger messageCounter = new AtomicInteger();
-    private final ConcurrentHashMap<Integer, ConnectionHandler<T>> activeConnections = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, LinkedList<Integer>> channelSubscriptions = new ConcurrentHashMap<>();
-    private final UserDataBase userDataBase;
+/**
+ * Manages connections and subscriptions for STOMP clients.
+ */
+public class ConnectionsImpl implements Connections<String> {
 
-    public ConnectionsImpl() {
-        this.userDataBase = UserDataBase.getInstance();
+    // Stores active clients: connectionId → ConnectionHandler
+    private final ConcurrentHashMap<Integer, ConnectionHandler<String>> clientHandlers;
+
+    // Stores subscribers per channel: channel → sorted set of connection IDs
+    private final ConcurrentHashMap<String, Set<Integer>> subscribersByChannel;
+
+    // Stores client subscriptions: connectionId → (channel → subscriptionId) [Maintains insertion order]
+    private final ConcurrentHashMap<Integer, Map<String, String>> subscriptionsByClient;
+
+    // Read-Write Lock for handling client connection updates safely
+    private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
+
+    private ConnectionsImpl() {
+        this.clientHandlers = new ConcurrentHashMap<>();
+        this.subscribersByChannel = new ConcurrentHashMap<>();
+        this.subscriptionsByClient = new ConcurrentHashMap<>();
     }
 
-    public ConnectionsImpl(UserDataBase userDataBase) {
-        this.userDataBase = userDataBase;
+    // Singleton instance holder
+    private static class Holder {
+        private static final ConnectionsImpl INSTANCE = new ConnectionsImpl();
+    }
+
+    /**
+     * Returns the singleton instance of ConnectionsImpl.
+     */
+    public static ConnectionsImpl getInstance() {
+        return Holder.INSTANCE;
     }
 
     @Override
-    public boolean send(int connectionId, T msg) {
-        ConnectionHandler<T> handler = activeConnections.get(connectionId);
+    public boolean send(int connectionId, String message) {
+        ConnectionHandler<String> handler = clientHandlers.get(connectionId);
         if (handler != null) {
-            handler.send(msg);
+            handler.send(message);
             return true;
         }
         return false;
     }
 
     @Override
-    public void send(String channel, T msg) {
-        synchronized (channelSubscriptions) {
-            LinkedList<Integer> subscribers = channelSubscriptions.get(channel);
-            if (subscribers != null) {
-                System.out.println("Forwarding message to channel: " + channel);
-                for (int connectionId : subscribers) {
-                    System.out.println("➡️ Delivering to connection ID: " + connectionId);
-                    send(connectionId, msg);
-                }
-            } else {
-                System.out.println("No subscribers found for channel: " + channel);
+    public void send(String channel, String message) {
+        Set<Integer> subscribers = subscribersByChannel.get(channel);
+        if (subscribers != null) {
+            for (Integer connectionId : subscribers) {
+                send(connectionId, message);
             }
         }
     }
-    
-    
 
     @Override
     public void disconnect(int connectionId) {
-        handleUserLogout(connectionId);
-        activeConnections.remove(connectionId);
+        lock.writeLock().lock();
+        try {
+            clientHandlers.remove(connectionId);
+
+            Map<String, String> userSubscriptions = subscriptionsByClient.remove(connectionId);
+            if (userSubscriptions != null) {
+                for (String channel : userSubscriptions.keySet()) {
+                    subscribersByChannel.computeIfPresent(channel, (key, subscribers) -> {
+                        subscribers.remove(connectionId);
+                        return subscribers.isEmpty() ? null : subscribers;
+                    });
+                }
+            }
+        } finally {
+            lock.writeLock().unlock();
+        }
     }
 
-    private void removeUserFromAllChannels(int connectionId) {
-        LinkedList<String> userChannels = userDataBase.getUserSubscriptions(connectionId);
-        if (userChannels != null) {
-            synchronized (channelSubscriptions) {
-                for (String channel : userChannels) {
-                    LinkedList<Integer> subscribers = channelSubscriptions.get(channel);
-                    if (subscribers != null) {
-                        subscribers.remove(Integer.valueOf(connectionId));
-                        if (subscribers.isEmpty()) {
-                            channelSubscriptions.remove(channel);
-                        }
+    @Override
+    public void addClient(int connectionId, ConnectionHandler<String> handler) {
+        lock.writeLock().lock();
+        try {
+            clientHandlers.put(connectionId, handler);
+            subscriptionsByClient.put(connectionId, new LinkedHashMap<>()); // Keeps subscription order
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    @Override
+    public void subscribeClient(int connectionId, String channel, String subscriptionId) {
+        lock.writeLock().lock();
+        try {
+            subscribersByChannel.computeIfAbsent(channel, k -> new ConcurrentSkipListSet<>()).add(connectionId);
+
+            subscriptionsByClient.computeIfAbsent(connectionId, k -> new LinkedHashMap<>()).putIfAbsent(channel, subscriptionId);
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    @Override
+    public void unsubscribeClient(int connectionId, String channel) {
+        lock.writeLock().lock();
+        try {
+            subscribersByChannel.computeIfPresent(channel, (key, subscribers) -> {
+                subscribers.remove(connectionId);
+                return subscribers.isEmpty() ? null : subscribers;
+            });
+
+            Map<String, String> clientSubscriptions = subscriptionsByClient.get(connectionId);
+            if (clientSubscriptions != null) {
+                clientSubscriptions.remove(channel);
+            }
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    @Override
+    public String getClientSubscriptionId(int connectionId, String channel) {
+        lock.readLock().lock();
+        try {
+            Map<String, String> clientSubscriptions = subscriptionsByClient.get(connectionId);
+            if (clientSubscriptions != null && clientSubscriptions.containsKey(channel)) {
+                return clientSubscriptions.get(channel);
+            }
+            System.out.println("WARNING: No subscription ID found for connection " + connectionId + " on channel " + channel);
+            return "-1"; 
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    @Override
+    public Set<Integer> getChannelSubscribers(String channel) {
+        lock.readLock().lock();
+        try {
+            return subscribersByChannel.get(channel);
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    @Override
+    public String findChannelBySubscription(int connectionId, String subscriptionId) {
+        lock.readLock().lock();
+        try {
+            Map<String, String> clientSubscriptions = subscriptionsByClient.get(connectionId);
+            if (clientSubscriptions != null) {
+                for (Map.Entry<String, String> entry : clientSubscriptions.entrySet()) {
+                    if (entry.getValue().equals(subscriptionId)) {
+                        return entry.getKey();
                     }
                 }
             }
-        }
-        userDataBase.resetUserSubscriptions(connectionId);
-    }
-
-    @Override
-    public boolean isValidLogin(String username, String password) {
-        return userDataBase.verifyCredentials(username, password);
-    }
-
-    @Override
-    public boolean isUserLoggedIn(String username, String password) {
-        return userDataBase.isUserOnline(username);
-    }
-
-    @Override
-    public boolean checkUserExists(String username) {
-        return userDataBase.userExists(username);
-    }
-
-    @Override
-    public void handleUserLogin(int connectionId, String username, String password) {
-        if (!userDataBase.userExists(username)) {
-            userDataBase.registerUser(username, password);
-        }
-        userDataBase.assignConnection(connectionId, username);
-    }
-
-    @Override
-    public void handleUserLogout(int connectionId) {
-        removeUserFromAllChannels(connectionId);
-        activeConnections.remove(connectionId);
-        userDataBase.releaseConnection(connectionId);
-    }
-
-    @Override
-    public void addSubscription(String channel, int connectionId, int subscriptionId) {
-        if (subscriptionId == 0) {
-            subscriptionId = generateSubscriptionId(connectionId);
-        }
-    
-        System.out.println("✅ Storing subscription: Connection ID " + connectionId + " -> Channel: " + channel + " -> Subscription ID: " + subscriptionId);
-        
-        userDataBase.subscribeUser(connectionId, subscriptionId, channel);
-    
-        synchronized (channelSubscriptions) {
-            channelSubscriptions.computeIfAbsent(channel, k -> new LinkedList<>()).add(connectionId);
-        }
-        
-        System.out.println("📡 Updated Subscriptions: " + channelSubscriptions);
-    }
-    
-
-    private int generateSubscriptionId(int connectionId) {
-        int newId = connectionId * 1000 + channelSubscriptions.size();  // Ensure a unique ID
-        System.out.println("🆕 Generated new Subscription ID: " + newId);
-        return newId;
-    }
-
-
-    
-
-
-    @Override
-    public void removeSubscription(int connectionId, int subscriptionId) {
-        String channel = userDataBase.unsubscribeUser(connectionId, subscriptionId);
-        if (channel != null) {
-            synchronized (channelSubscriptions) {
-                LinkedList<Integer> subscribers = channelSubscriptions.get(channel);
-                if (subscribers != null) {
-                    subscribers.remove(Integer.valueOf(connectionId));
-                    if (subscribers.isEmpty()) {
-                        channelSubscriptions.remove(channel);
-                    }
-                }
-            }
+            return "";
+        } finally {
+            lock.readLock().unlock();
         }
     }
-
-    @Override
-    public void registerConnectionHandler(ConnectionHandler<T> handler, int connectionId) {
-        activeConnections.put(connectionId, handler);
-    }
-
-    @Override
-    public ConnectionHandler<T> retrieveConnectionHandler(int connectionId) {
-        return activeConnections.get(connectionId);
-    }
-
-    @Override
-    public boolean isSubscribedToChannel(String channel, int connectionId) {
-        synchronized (channelSubscriptions) {
-            LinkedList<Integer> subscribers = channelSubscriptions.get(channel);
-            return subscribers != null && subscribers.contains(connectionId);
-        }
-    }
-
-    @Override
-    public LinkedList<Integer> getSubscribersOfChannel(String channel) {
-        synchronized (channelSubscriptions) {
-            return channelSubscriptions.getOrDefault(channel, new LinkedList<>());
-        }
-    }
-
-    @Override
-    public int generateMessageId() {
-        return messageCounter.getAndIncrement();
-    }
-
-    @Override
-    public Integer fetchSubscriptionId(int connectionId, String channel) {
-        System.out.println("🔍 Fetching Subscription ID for connection: " + connectionId + " in channel: " + channel);
-        Integer subscriptionId = userDataBase.getSubscriptionId(connectionId, channel);
-        
-        if (subscriptionId == null) {
-            System.out.println("❌ Subscription ID not found for " + channel);
-        } else {
-            System.out.println("✅ Retrieved Subscription ID: " + subscriptionId);
-        }
-    
-        return subscriptionId;
-    }
-    
-}    
+}

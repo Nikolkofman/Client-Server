@@ -2,6 +2,8 @@ package bgu.spl.net.srv;
 
 import bgu.spl.net.api.MessageEncoderDecoder;
 import bgu.spl.net.api.MessagingProtocol;
+import bgu.spl.net.api.StompMessagingProtocol;
+import bgu.spl.net.srv.*;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -12,7 +14,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 
 public class NonBlockingConnectionHandler<T> implements ConnectionHandler<T> {
 
-    private static final int BUFFER_ALLOCATION_SIZE = 1 << 13; //8k
+    private static final int BUFFER_ALLOCATION_SIZE = 1 << 13; // 8 KB
     private static final ConcurrentLinkedQueue<ByteBuffer> BUFFER_POOL = new ConcurrentLinkedQueue<>();
 
     private final MessagingProtocol<T> protocol;
@@ -20,16 +22,27 @@ public class NonBlockingConnectionHandler<T> implements ConnectionHandler<T> {
     private final Queue<ByteBuffer> writeQueue = new ConcurrentLinkedQueue<>();
     private final SocketChannel chan;
     private final Reactor reactor;
+    private final int connectionId;
 
     public NonBlockingConnectionHandler(
             MessageEncoderDecoder<T> reader,
             MessagingProtocol<T> protocol,
             SocketChannel chan,
-            Reactor reactor) {
+            Reactor reactor,
+            int connectionId) {
         this.chan = chan;
         this.encdec = reader;
         this.protocol = protocol;
         this.reactor = reactor;
+        this.connectionId = connectionId;
+
+        // Safe casting
+        if (protocol instanceof StompMessagingProtocol) {
+            StompMessagingProtocol<T> StompMessagingProtocolImpl = (StompMessagingProtocol<T>) protocol;
+            StompMessagingProtocolImpl.start(connectionId, (Connections<T>) ConnectionsImpl.getInstance(), this);
+        } else {
+            throw new IllegalArgumentException("Invalid protocol type: Expected StompMessagingProtocol");
+        }
     }
 
     public Runnable continueRead() {
@@ -65,7 +78,6 @@ public class NonBlockingConnectionHandler<T> implements ConnectionHandler<T> {
             close();
             return null;
         }
-
     }
 
     public void close() {
@@ -118,6 +130,7 @@ public class NonBlockingConnectionHandler<T> implements ConnectionHandler<T> {
 
     @Override
     public void send(T msg) {
-        //IMPLEMENT IF NEEDED
+        writeQueue.add(ByteBuffer.wrap(encdec.encode(msg)));
+        reactor.updateInterestedOps(chan, SelectionKey.OP_READ | SelectionKey.OP_WRITE);
     }
 }

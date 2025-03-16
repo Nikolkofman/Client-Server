@@ -2,6 +2,9 @@ package bgu.spl.net.srv;
 
 import bgu.spl.net.api.MessageEncoderDecoder;
 import bgu.spl.net.api.MessagingProtocol;
+import bgu.spl.net.api.StompMessagingProtocol;
+import bgu.spl.net.srv.ConnectionsImpl;
+
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.IOException;
@@ -15,18 +18,26 @@ public class BlockingConnectionHandler<T> implements Runnable, ConnectionHandler
     private BufferedInputStream in;
     private BufferedOutputStream out;
     private volatile boolean connected = true;
+    private final int connectionId;
 
-    public BlockingConnectionHandler(Socket sock, MessageEncoderDecoder<T> reader, MessagingProtocol<T> protocol) {
+    public BlockingConnectionHandler(Socket sock, MessageEncoderDecoder<T> reader, MessagingProtocol<T> protocol, int connectionId) {
         this.sock = sock;
         this.encdec = reader;
         this.protocol = protocol;
+        this.connectionId = connectionId;
+
+        if (protocol instanceof StompMessagingProtocol) {
+            StompMessagingProtocol<T> StompMessagingProtocolImpl = (StompMessagingProtocol<T>) protocol;
+            StompMessagingProtocolImpl.start(connectionId, (Connections<T>) ConnectionsImpl.getInstance(), this);
+        } else {
+            throw new IllegalArgumentException("Invalid protocol type: Expected StompMessagingProtocol");
+        }
     }
 
     @Override
     public void run() {
-        try (Socket sock = this.sock) { //just for automatic closing
+        try (Socket sock = this.sock) { // Automatic closing
             int read;
-
             in = new BufferedInputStream(sock.getInputStream());
             out = new BufferedOutputStream(sock.getOutputStream());
 
@@ -40,11 +51,9 @@ public class BlockingConnectionHandler<T> implements Runnable, ConnectionHandler
                     }
                 }
             }
-
         } catch (IOException ex) {
             ex.printStackTrace();
         }
-
     }
 
     @Override
@@ -55,6 +64,12 @@ public class BlockingConnectionHandler<T> implements Runnable, ConnectionHandler
 
     @Override
     public void send(T msg) {
-        //IMPLEMENT IF NEEDED
+        try {
+            out = new BufferedOutputStream(sock.getOutputStream());
+            out.write(encdec.encode(msg));
+            out.flush();
+        } catch (IOException ex) {
+            ex.printStackTrace();
+        }
     }
 }

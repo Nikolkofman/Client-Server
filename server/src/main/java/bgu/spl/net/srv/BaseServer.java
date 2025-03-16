@@ -5,6 +5,7 @@ import bgu.spl.net.api.MessagingProtocol;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
 public abstract class BaseServer<T> implements Server<T> {
@@ -13,6 +14,7 @@ public abstract class BaseServer<T> implements Server<T> {
     private final Supplier<MessagingProtocol<T>> protocolFactory;
     private final Supplier<MessageEncoderDecoder<T>> encdecFactory;
     private ServerSocket sock;
+    private AtomicInteger idCounter = new AtomicInteger(1);
 
     public BaseServer(
             int port,
@@ -40,8 +42,9 @@ public abstract class BaseServer<T> implements Server<T> {
                 BlockingConnectionHandler<T> handler = new BlockingConnectionHandler<>(
                         clientSock,
                         encdecFactory.get(),
-                        protocolFactory.get());
-
+                        protocolFactory.get(),
+                        idCounter.get());
+                idCounter.incrementAndGet();
                 execute(handler);
             }
         } catch (IOException ex) {

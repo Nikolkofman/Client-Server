@@ -1,35 +1,26 @@
 package bgu.spl.net.srv;
-import java.util.LinkedList;
+
+import java.util.Set;
 
 public interface Connections<T> {
 
-    void send(String channel, T msg);
-    
-    boolean send(int connectionId, T msg);
+    boolean send(int connectionId, T message);
+
+    void send(String channel, T message);
 
     void disconnect(int connectionId);
 
-    boolean isUserLoggedIn(String username, String password);
+    void addClient(int connectionId, ConnectionHandler<T> handler);
 
-    boolean isValidLogin(String username, String password);
+    
+    void subscribeClient(int connectionId, String channel, String subscriptionId);
 
-    void handleUserLogin(int connectionId, String username, String password);
+   
+    void unsubscribeClient(int connectionId, String channel);
 
-    void handleUserLogout(int connectionId);
+    String getClientSubscriptionId(int connectionId, String channel);
 
-    void addSubscription(String channel, int connectionId, int subscriptionId);
+    Set<Integer> getChannelSubscribers(String channel);
 
-    void removeSubscription(int connectionId, int subscriptionId);
-
-    ConnectionHandler<T> retrieveConnectionHandler(int connectionId);
-
-    void registerConnectionHandler(ConnectionHandler<T> handler, int connectionId);
-
-    boolean isSubscribedToChannel(String channel, int connectionId);
-
-    LinkedList<Integer> getSubscribersOfChannel(String channel);
-
-    int generateMessageId();
-    boolean checkUserExists(String username);
-    Integer fetchSubscriptionId(int connectionId, String channel);
+    public String findChannelBySubscription(int connectionId, String subscriptionId);
 }

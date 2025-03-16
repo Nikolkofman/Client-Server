@@ -10,6 +10,7 @@ import java.nio.channels.Selector;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
 public class Reactor<T> implements Server<T> {
@@ -22,6 +23,8 @@ public class Reactor<T> implements Server<T> {
 
     private Thread selectorThread;
     private final ConcurrentLinkedQueue<Runnable> selectorTasks = new ConcurrentLinkedQueue<>();
+    
+    private AtomicInteger idCounter = new AtomicInteger(1);
 
     public Reactor(
             int numThreads,
@@ -99,7 +102,9 @@ public class Reactor<T> implements Server<T> {
                 readerFactory.get(),
                 protocolFactory.get(),
                 clientChan,
-                this);
+                this,
+                idCounter.get());
+        idCounter.incrementAndGet();
         clientChan.register(selector, SelectionKey.OP_READ, handler);
     }
 
