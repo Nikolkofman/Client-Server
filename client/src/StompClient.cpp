@@ -13,7 +13,9 @@ std::mutex mutex;
 
 
 int main() {
-    std::unique_ptr<StompProtocol> protocol(new StompProtocol());
+   std::shared_ptr<StompProtocol> protocol = std::make_shared<StompProtocol>();
+
+
 
     UserInputHandler UserInputHandler(protocol.get(), protocol->getConnectionMutex());
     StompListener StompListener(protocol.get(), protocol->getConnectionMutex());

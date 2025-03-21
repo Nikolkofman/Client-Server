@@ -22,7 +22,7 @@ public:
     // Frame creation methods
     std::string generateConnectFrame(const std::string& username, const std::string& password);
     std::string generateSubscribeFrame(const std::string& channel, int subscriptionId, int receiptId);
-    std::string generateUnsubscribeFrame(const std::string& channel);
+    std::string generateUnsubscribeFrame(const std::string& channel, int subscriptionId, int receiptId);
     std::string generateSendFrame(const std::string& channel, const std::string& message);
     std::string generateDisconnectFrame(int receiptId);
     ConnectionHandler* getConnectionHandler();
@@ -33,6 +33,8 @@ public:
     // Command processing
     std::string processCommand(const std::string& command);
     const std::string& getUsername() const;
+    int getNextReceiptId();
+    int getNextSubscriptionId();
     
 
 private:
@@ -48,6 +50,7 @@ private:
     std::string epoch_to_date(int epochTime);
     static std::string trim(const std::string& str);
     
+    
 
     void resetState();
     
@@ -60,9 +63,19 @@ private:
     std::unordered_map<std::string, std::pair<std::string, std::string>> pendingReceipts;
     std::unordered_map<std::string, std::vector<Event>> savedEvents;
     std::string loggedName;
-    int subscriptionIdCounter;
-    int receiptIdCounter;
+    // int subscriptionIdCounter;
+    // int receiptIdCounter;
     bool isLoggedIn;
+    std::mutex logoutMutex;
+    static std::atomic<int> globalReceiptCounter;
+    static std::atomic<int> globalSubscriptionCounter;
+    static std::mutex receiptMutex;
+    std::mutex eventsMutex;
+    std::mutex subscriptionMutex;
+    std::unordered_map<std::string, std::unordered_map<std::string, int>> userSubscriptions;
+
+   
+    
     
 };
 

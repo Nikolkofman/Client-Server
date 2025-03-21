@@ -9,12 +9,15 @@
 #include <iomanip>
 #include <algorithm>
 #include <filesystem>
+#include <atomic>
 
 StompProtocol::StompProtocol()
 : connectionHandler(nullptr), connectionMutex(), connectionCV(), 
   subscriptions(), pendingReceipts(), savedEvents(), loggedName(""),
-  subscriptionIdCounter(0), receiptIdCounter(0), isLoggedIn(false) {}
+  isLoggedIn(false), logoutMutex(), eventsMutex(), subscriptionMutex() {}  // ✅ Initialize eventsMutex
 
+
+  
 
 void StompProtocol::waitForConnection() {
     std::unique_lock<std::mutex> lock(connectionMutex);  // Lock to protect connectionHandler
@@ -22,31 +25,39 @@ void StompProtocol::waitForConnection() {
 }
 
 void StompProtocol::setConnectionHandler(const std::string& hostPort) {
-    // Parse the host and port from the string format "host:port"
-    std::lock_guard<std::mutex> lock(connectionMutex);  // Lock to protect connectionHandler
-    
-    if(connectionHandler != nullptr){
+    std::lock_guard<std::mutex> lock(connectionMutex);
+
+    if(connectionHandler != nullptr) {
+        std::cerr << "[ERROR] ConnectionHandler already exists for user: " << loggedName << std::endl;
         return;
     }
+
     size_t colonPos = hostPort.find(':');
     std::string host = hostPort.substr(0, colonPos);
     int port = std::stoi(hostPort.substr(colonPos + 1));
-   
-    // Initialize the connectionHandler object with the provided host and port
+
     connectionHandler = std::unique_ptr<ConnectionHandler>(new ConnectionHandler(host, port));
-    if(connectionHandler->connect()){
+
+    if(connectionHandler->connect()) {
+        std::cerr << "[DEBUG] Connection established for user: " << loggedName << " on " << hostPort << std::endl;
         connectionCV.notify_one();
+    } else {
+        std::cerr << "[ERROR] Connection failed for user: " << loggedName << std::endl;
     }
-    // Notify any waiting threads that the connection handler is now initialized
-    //connectionCV.notify_all();
 }
 
-void StompProtocol::clearConnectionHandler(){
-    connectionHandler = nullptr;
+void StompProtocol::clearConnectionHandler() {
+    std::lock_guard<std::mutex> lock(connectionMutex);
+    if (connectionHandler) {
+        connectionHandler->close();
+        connectionHandler.reset();
+    }
 }
+
+
 
 ConnectionHandler* StompProtocol::getConnectionHandler() {
-        return connectionHandler.get();  // Return the connectionHandler pointer
+        return connectionHandler.get();  
     }
 
 
@@ -80,22 +91,37 @@ std::string StompProtocol::processCommand(const std::string& command) {
             std::cerr << "Please login first." << std::endl;
             return "";
         }
-
+    
         std::string channel;
         if (!(stream >> channel)) {
             std::cerr << "join command needs 1 argument: (channel_name)\n";
             return "";
         }
-
-        int receiptId = receiptIdCounter++;
-        int subscriptionId = subscriptionIdCounter++;
+    
+      
+        if (userSubscriptions[loggedName].find(channel) != userSubscriptions[loggedName].end()) {
+            std::cerr << "Already subscribed to " << channel << " as " << loggedName << std::endl;
+            return "";
+        }
+    
+        int receiptId = getNextReceiptId();
+        int subscriptionId = getNextSubscriptionId();
+        std::cerr << "[DEBUG] Assigned unique subscription ID: " << subscriptionId << " for channel: " << channel << std::endl;
+    
+        userSubscriptions[loggedName][channel] = subscriptionId;
         pendingReceipts[std::to_string(receiptId)] = std::make_pair("join", channel);
-        subscriptions[channel] = subscriptionId;
-
+    
         std::string frame = generateSubscribeFrame(channel, subscriptionId, receiptId);
-        connectionHandler->sendFrameAscii(frame, '\0');
-        return "";
+        if (!connectionHandler->sendFrameAscii(frame, '\0')) {
+            std::cerr << "[ERROR] Failed to send SUBSCRIBE frame for " << channel << std::endl;
+            return "";
+        }
+    
+        std::cerr << "[DEBUG] Sent SUBSCRIBE frame for " << channel << " with receipt ID: " << receiptId << std::endl;
     }
+    
+    
+    
     else if (action == "report") {
         if (!isLoggedIn) {
             std::cerr << "Please login first." << std::endl;
@@ -128,31 +154,40 @@ std::string StompProtocol::processCommand(const std::string& command) {
     }
     else if (action == "logout") {
         if (!isLoggedIn) {
-            std::cerr << "Please login first." << std::endl;
+            std::cerr << "[ERROR] Cannot logout: User is not logged in." << std::endl;
             return "";
         }
     
-  
-        int disconnectReceiptId = receiptIdCounter++;
-        pendingReceipts[std::to_string(disconnectReceiptId)] = std::make_pair("logout", "");
+        std::cerr << "[DEBUG] Beginning force logout process for user: " << loggedName << std::endl;
     
-        std::string disconnectFrame = generateDisconnectFrame(disconnectReceiptId);
-        connectionHandler->sendFrameAscii(disconnectFrame, '\0');
+        // ✅ Ensure all pending messages are processed before logging out
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
     
+        // ✅ Step 1: **Close connection immediately without sending any STOMP frame**
+        if (connectionHandler) {
+            std::cerr << "[WARNING] Force closing the connection to prevent server crash." << std::endl;
+            connectionHandler->close();  
+            connectionHandler.reset();  
+        }
+    
+        // ✅ Step 2: Reset client state safely
+        resetState();
+    
+        std::cerr << "[INFO] Logout completed for user: " << loggedName << std::endl;
         return "";
     }
     
-    
-
     std::cerr << "Unknown command: " << action << ". Type 'help' for usage.\n";
     return "";
 }
+
 
 
 std::string StompProtocol::generateSendFrame(const std::string& channel, const std::string& message) {
     std::ostringstream frame;
     frame << "SEND\n"
           << "destination:/" << channel << "\n"
+          << "user:" << loggedName << "\n"  
           << "content-type:text/plain\n\n" 
           << message << "\n\0";
     return frame.str();
@@ -183,37 +218,31 @@ std::string StompProtocol::generateConnectFrame(const std::string& username, con
     return frame.str();
 }
 
-std::string StompProtocol::generateUnsubscribeFrame(const std::string& channel) {
-    if (subscriptions.find(channel) == subscriptions.end()) {
-        throw std::runtime_error("Channel not subscribed: " + channel);
-    }
-
-    int subscriptionId = subscriptions[channel];
-    int receiptId = receiptIdCounter++;
-
+std::string StompProtocol::generateUnsubscribeFrame(const std::string& channel, int subscriptionId, int receiptId) {
     std::ostringstream frame;
     frame << "UNSUBSCRIBE\n"
           << "id:" << subscriptionId << "\n"
           << "receipt:" << receiptId << "\n\n\0";
 
-    
     return frame.str();
 }
+
 
 std::string StompProtocol::generateDisconnectFrame(int receiptId) {
     std::ostringstream frame;
     frame << "DISCONNECT\n"
-          << "accept-version:1.2\n"  
-          << "receipt:" << receiptId << "\n\n\0";  // ✅ Fix null termination
+          << "receipt:" << receiptId << "\n\n\0"; 
 
     return frame.str();
 }
 
 
 
-
-
 void StompProtocol::parseFrame(const std::string& frame) {
+    std::lock_guard<std::mutex> lock(connectionMutex);  
+
+    std::cerr << "[DEBUG] Raw STOMP frame received:\n" << frame << std::endl;  // ✅ Print ALL received frames
+
     std::istringstream stream(frame);
     std::string command;
     std::getline(stream, command);
@@ -242,6 +271,8 @@ void StompProtocol::parseFrame(const std::string& frame) {
 }
 
 
+
+
 void StompProtocol::handleConnectedFrame(const std::unordered_map<std::string, std::string>& headers) {
     auto versionIt = headers.find("version");
     if (versionIt != headers.end()) {
@@ -251,79 +282,81 @@ void StompProtocol::handleConnectedFrame(const std::unordered_map<std::string, s
         throw std::runtime_error("Malformed CONNECTED frame: missing version header");
     }
 }
+
 void StompProtocol::handleMessageFrame(const std::unordered_map<std::string, std::string>& headers, std::istringstream& bodyStream) {
     auto destinationIt = headers.find("destination");
-    if (destinationIt != headers.end()) {
-        std::string channel = destinationIt->second;
-
-        if (!channel.empty() && channel[0] == '/') {
-            channel = channel.substr(1); 
-        }
-
-        std::string body;
-        std::getline(bodyStream, body, '\0');
-
-        Event event(body);
-        event.setChannelName(channel);  
-
-        savedEvents[channel].push_back(event);  
-    } else {
-        std::cerr << "Malformed MESSAGE frame: missing destination header" << std::endl;
+    if (destinationIt == headers.end()) {
+        std::cerr << "[ERROR] Malformed MESSAGE frame: missing destination header" << std::endl;
+        return;
     }
+
+    std::string channel = destinationIt->second;
+    if (!channel.empty() && channel[0] == '/') {
+        channel = channel.substr(1);
+    }
+
+    // ✅ Extract event owner (Ensure consistency)
+    std::string eventOwner = loggedName;
+    auto userIt = headers.find("user");
+    if (userIt != headers.end()) {
+        eventOwner = trim(userIt->second);
+    }
+
+    std::string body;
+    std::getline(bodyStream, body, '\0');
+
+    Event event(body);
+    event.setChannelName(channel);
+    event.setEventOwnerUser(eventOwner);
+
+    // ✅ Use mutex to protect shared storage (avoids crashes)
+    {
+        std::lock_guard<std::mutex> lock(eventsMutex);
+        savedEvents[channel].push_back(event);
+    }
+
+    std::cerr << "[DEBUG] Stored event for channel: " << channel
+              << " | User: " << event.getEventOwnerUser()
+              << " | Total events in this channel: " << savedEvents[channel].size() << std::endl;
 }
+
+
+
 
 
 
 void StompProtocol::handleReceiptFrame(const std::unordered_map<std::string, std::string>& headers) {
     auto receiptIdIt = headers.find("receipt-id");
+
     if (receiptIdIt == headers.end()) {
-        std::cerr << "Warning: RECEIPT frame received but no receipt-id found!" << std::endl;
+        std::cerr << "[ERROR] RECEIPT frame received without receipt-id!" << std::endl;
         return;
     }
 
-    std::string receiptID = receiptIdIt->second;
-    
+    std::string receiptID = trim(receiptIdIt->second);
     if (pendingReceipts.find(receiptID) == pendingReceipts.end()) {
-        std::cerr << "Warning: RECEIPT ID " << receiptID << " not found in pendingReceipts!" << std::endl;
-        
-        // Debugging: Print all stored receipt IDs
-        std::cerr << "Stored receipt IDs: ";
-        for (const auto& entry : pendingReceipts) {
-            std::cerr << entry.first << " ";
-        }
-        std::cerr << std::endl;
-        
+        std::cerr << "[WARNING] RECEIPT ID '" << receiptID << "' not found in pendingReceipts!" << std::endl;
         return;
     }
-    
+
     auto actionIt = pendingReceipts.find(receiptID);
     std::string action = actionIt->second.first;
-    std::string channel = actionIt->second.second;
-    
-    if (action == "join") {
-        std::cout << "Joined channel " << channel << std::endl;
-    } else if (action == "exit") {
-        subscriptions.erase(channel);
-        std::cout << "Exited channel " << channel << std::endl;
-    } else if (action == "exit_logout") {
-        subscriptions.erase(channel);
-        std::cout << "Exited channel " << channel << " (preparing for logout)" << std::endl;
 
-        // ✅ If all channels are unsubscribed, proceed with logout
-        if (subscriptions.empty()) {
-            std::cout << "All channels exited. Proceeding with logout..." << std::endl;
-            int disconnectReceiptId = receiptIdCounter++;
-            pendingReceipts[std::to_string(disconnectReceiptId)] = std::make_pair("logout", "");
-            std::string disconnectFrame = generateDisconnectFrame(disconnectReceiptId);
-            connectionHandler->sendFrameAscii(disconnectFrame, '\0');
-        }
+    if (action == "join") {
+        std::cout << "Joined channel " << actionIt->second.second << std::endl;
     } else if (action == "logout") {
-        std::cout << "Logged out" << std::endl; 
+        std::cout << "Logged out" << std::endl;
         resetState();
+    } else if (action == "summary" || action == "report") {
+        std::cerr << "[DEBUG] Clearing stuck receipt for action: " << action << std::endl;
     }
-    
+
     pendingReceipts.erase(receiptID);
 }
+
+
+
+
 
 
 void StompProtocol::handleErrorFrame(const std::unordered_map<std::string, std::string>& headers, std::istringstream& bodyStream) {
@@ -333,7 +366,7 @@ void StompProtocol::handleErrorFrame(const std::unordered_map<std::string, std::
     std::string body;
     std::getline(bodyStream, body, '\0');
 
-    // ✅ Better error handling for specific cases
+ 
     if (errorMessage.find("Password does not match") != std::string::npos) {
         std::cout << "Wrong password" << std::endl;
     } else {
@@ -355,7 +388,8 @@ void StompProtocol::handleErrorFrame(const std::unordered_map<std::string, std::
         errorMessage.find("Unauthorized") != std::string::npos) {
         
         if (connectionHandler) {
-            int disconnectReceiptId = receiptIdCounter++;
+            int disconnectReceiptId = globalReceiptCounter.fetch_add(1);  // ✅ Ensures unique IDs
+
             pendingReceipts[std::to_string(disconnectReceiptId)] = std::make_pair("logout", "");
             
             std::string frame = generateDisconnectFrame(disconnectReceiptId);
@@ -367,24 +401,27 @@ void StompProtocol::handleErrorFrame(const std::unordered_map<std::string, std::
 }
 
 void StompProtocol::handleReportCommand(const std::string& filePath) {
+    if (!isLoggedIn) {
+        std::cerr << "Error: Cannot report, user not logged in." << std::endl;
+        return;
+    }
+
     names_and_events parsedData = parseEventsFile(filePath);
     std::string channel_name = trim(parsedData.channel_name);
 
-    if (subscriptions.find(channel_name) == subscriptions.end()) {
+    if (userSubscriptions[loggedName].find(channel_name) == userSubscriptions[loggedName].end()) {
         std::cerr << "Error: You are not subscribed to channel [" << channel_name << "]." << std::endl;
         return;
     }
 
-    if (!connectionHandler) {
+    if (!connectionHandler || !connectionHandler->isOpen()) {
         std::cerr << "Error: Connection to server lost. Cannot send event reports." << std::endl;
         return;
     }
 
-    const std::vector<Event>& events = parsedData.events;
-    for (Event event : events) {  
+    for (Event event : parsedData.events) {  
         event.setEventOwnerUser(trim(loggedName));
         event.setChannelName(channel_name);  
-        savedEvents[channel_name].push_back(event);
 
         std::ostringstream body;
         body << "user: " << loggedName << "\n"
@@ -399,42 +436,44 @@ void StompProtocol::handleReportCommand(const std::string& filePath) {
         body << "description:\n" << event.get_description() << "\n";
 
         std::string frame = generateSendFrame("/" + channel_name, body.str());
-        connectionHandler->sendFrameAscii(frame, '\0');
-    }
-
-    std::cout << "Reported" << std::endl;  
-}
-
-
-
-void StompProtocol::handleSummaryCommand(const std::string& channel, const std::string& user, const std::string& filePath) {
-    std::ofstream outFile(filePath, std::ios::trunc);
-    if (!outFile.is_open()) {
-        std::cerr << "Error: Could not create file " << filePath << std::endl;
-        return;
-    }
-
-    std::string formattedChannel = channel;
-
-    if (savedEvents.find(formattedChannel) == savedEvents.end()) {
-        if (savedEvents.find("/" + channel) != savedEvents.end()) {
-            formattedChannel = "/" + channel;
-        } else if (savedEvents.find("//" + channel) != savedEvents.end()) {
-            formattedChannel = "//" + channel;
+        if (!connectionHandler->sendFrameAscii(frame, '\0')) {
+            std::cerr << "Failed to send event report." << std::endl;
         }
     }
 
+    std::cout << "Reported" << std::endl;
+}
+
+
+void StompProtocol::handleSummaryCommand(const std::string& channel, const std::string& user, const std::string& filePath) {
+    std::lock_guard<std::mutex> lock(eventsMutex);
+
+    std::ofstream outFile(filePath, std::ios::trunc);
+    if (!outFile.is_open()) {
+        std::cerr << "[ERROR] Could not create or open file: " << filePath << std::endl;
+        return;
+    }
+
+    std::string formattedChannel = trim(channel);
+    if (!formattedChannel.empty() && formattedChannel[0] == '/') {
+        formattedChannel = formattedChannel.substr(1);
+    }
+
+
     auto channelIt = savedEvents.find(formattedChannel);
     if (channelIt == savedEvents.end()) {
-        outFile << "No events found for channel: " << formattedChannel << "\n";
-        outFile.close();
-        return;
+        std::string alternativeChannel = "/" + formattedChannel;
+        channelIt = savedEvents.find(alternativeChannel);
+        if (channelIt == savedEvents.end()) {
+            outFile << "No events found for channel: " << formattedChannel << "\n";
+            outFile.close();
+            return;
+        }
     }
 
     std::vector<Event> filteredEvents;
     for (const auto& event : channelIt->second) {
-        std::string trimmedOwner = trim(event.getEventOwnerUser());
-        if (trimmedOwner == trim(user)) {
+        if (strcasecmp(event.getEventOwnerUser().c_str(), user.c_str()) == 0 || user == "all") {  
             filteredEvents.push_back(event);
         }
     }
@@ -445,35 +484,45 @@ void StompProtocol::handleSummaryCommand(const std::string& channel, const std::
         return;
     }
 
+
     std::sort(filteredEvents.begin(), filteredEvents.end(), [](const Event& a, const Event& b) {
         return (a.get_date_time() < b.get_date_time()) || 
                (a.get_date_time() == b.get_date_time() && a.get_name() < b.get_name());
     });
 
-    outFile << "Channel " << formattedChannel << "\n"
+
+    auto isTrue = [](std::string value) {
+        value = trim(value);
+        return value == "true" || value == "True" || value == "1";
+    };
+
+    int activeCount = 0, forcesArrivalCount = 0;
+    for (const auto& event : channelIt->second) {
+        const auto& info = event.get_general_information();
+        if (info.count("active") && isTrue(info.at("active"))) {
+            activeCount++;
+        }
+        if (info.count("forces_arrival_at_scene") && isTrue(info.at("forces_arrival_at_scene"))) {
+            forcesArrivalCount++;
+        }
+    }
+
+    outFile << "Channel: " << formattedChannel << "\n"
             << "Stats:\n"
-            << "Total: " << filteredEvents.size() << "\n"
-            << "active: " << std::count_if(filteredEvents.begin(), filteredEvents.end(), 
-                           [](const Event& e){ return e.get_general_information().at("active") == "true"; }) << "\n"
-            << "forces arrival at scene: " << std::count_if(filteredEvents.begin(), filteredEvents.end(), 
-                           [](const Event& e){ return e.get_general_information().at("forces_arrival_at_scene") == "true"; }) << "\n\n";
+            << "Total events: " << filteredEvents.size() << "\n"
+            << "Active cases: " << activeCount << "\n"
+            << "Forces arrived at scene: " << forcesArrivalCount << "\n\n";
 
-    outFile << "Event Reports:\n";
-    for (size_t i = 0; i < filteredEvents.size(); i++) {
-        const Event& event = filteredEvents[i];
-
-        outFile << "Report_" << (i + 1) << ":\n"
-                << "\tcity: " << event.get_city() << "\n"
-                << "\tdate time: " << epoch_to_date(event.get_date_time()) << "\n"
-                << "\tevent name: " << event.get_name() << "\n"
-                << "\tsummary: " 
-                << (event.get_description().size() > 27 ? event.get_description().substr(0, 27) + "..." : event.get_description()) 
-                << "\n\n";
+    outFile << "Event Reports:\n\n";
+    for (const Event& event : filteredEvents) {
+        outFile << epoch_to_date(event.get_date_time()) << ":00 - " 
+                << event.get_name() << " - " << event.get_city() << ":\n"
+                << event.get_description() << "\n\n";
     }
 
     outFile.close();
-    std::cout << "Summary successfully written to " << filePath << std::endl;  
 }
+
 
 
 std::string StompProtocol::trim(const std::string& str) {  
@@ -486,40 +535,112 @@ std::string StompProtocol::trim(const std::string& str) {
 
 std::string StompProtocol::epoch_to_date(int epochTime) {
     std::time_t time = static_cast<std::time_t>(epochTime);
-    
     std::tm timeInfo;
     localtime_r(&time, &timeInfo);  
 
     std::ostringstream dateStream;
     dateStream << std::setfill('0') << std::setw(2) << timeInfo.tm_mday << "/"
                << std::setw(2) << (timeInfo.tm_mon + 1) << "/"
-               << timeInfo.tm_year + 1900 << " "  
+               << (timeInfo.tm_year + 1900) << " "
                << std::setw(2) << timeInfo.tm_hour << ":"
-               << std::setw(2) << timeInfo.tm_min;
+               << std::setw(2) << timeInfo.tm_min
+               << ":00";
 
     return dateStream.str();
 }
 
-
 void StompProtocol::resetState() {
-    isLoggedIn = false;
-    subscriptions.clear();
-    pendingReceipts.clear();
-    subscriptionIdCounter = 1;
-    receiptIdCounter = 1;
+    std::lock_guard<std::mutex> lock(logoutMutex);
 
-   
+    std::cerr << "[DEBUG] Resetting client state. Clearing pending receipts, events, and subscriptions..." << std::endl;
+
+    isLoggedIn = false;
+    loggedName.clear();
+
+    pendingReceipts.clear();
+
+    // ✅ Safely clear only this user's subscriptions
+    {
+        std::lock_guard<std::mutex> lock(subscriptionMutex);
+        userSubscriptions.erase(loggedName);
+    }
+
+    // ✅ Safely clear only this user's reported events
+    {
+        std::lock_guard<std::mutex> lock(eventsMutex);
+        for (auto it = savedEvents.begin(); it != savedEvents.end();) {
+            it->second.erase(
+                std::remove_if(it->second.begin(), it->second.end(),
+                    [this](const Event& event) { return event.getEventOwnerUser() == loggedName; }),
+                it->second.end()
+            );
+            if (it->second.empty()) {
+                it = savedEvents.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
     if (connectionHandler) {
         try {
-            connectionHandler->close(); 
+            connectionHandler->close();
         } catch (const std::exception& e) {
-            std::cerr << "Error closing connection: " << e.what() << std::endl;
+            std::cerr << "[ERROR] Closing connection: " << e.what() << std::endl;
         }
-        connectionHandler.reset(); 
+        connectionHandler.reset();
     }
+
+    std::cerr << "[DEBUG] Reset completed. User-specific events and subscriptions cleared." << std::endl;
 }
+
+
 
 
 std::mutex& StompProtocol::getConnectionMutex() {
     return connectionMutex;
+}
+
+std::atomic<int> StompProtocol::globalReceiptCounter(1);
+std::mutex StompProtocol::receiptMutex;
+int StompProtocol::getNextReceiptId() {
+    std::lock_guard<std::mutex> lock(receiptMutex);  // Prevent race conditions
+
+    std::ifstream inFile("receipt_counter.txt");
+    int id = 1;  // Default starting value
+
+    if (inFile) {
+        inFile >> id;  // Read the last stored counter
+        inFile.close();
+    }
+
+    std::ofstream outFile("receipt_counter.txt");
+    outFile << (id + 1);  // Increment and save
+    outFile.close();
+
+    std::cerr << "[DEBUG] Generated unique receipt ID: " << id << std::endl;
+    return id;
+}
+
+
+
+std::mutex subscriptionMutex;
+
+int StompProtocol::getNextSubscriptionId() {
+    std::lock_guard<std::mutex> lock(subscriptionMutex);
+
+    std::ifstream inFile("subscription_counter.txt");
+    int id = 1;  
+
+    if (inFile) {
+        inFile >> id;
+        inFile.close();
+    }
+
+    std::ofstream outFile("subscription_counter.txt");
+    outFile << (id + 1);
+    outFile.close();
+
+    std::cerr << "[DEBUG] Generated unique subscription ID: " << id << std::endl;
+    return id;
 }

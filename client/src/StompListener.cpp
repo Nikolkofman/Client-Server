@@ -9,7 +9,6 @@ StompListener::~StompListener() {
     stop();
 }
 
-// Main network listening loop
 void StompListener::run() {
     while (true) {
         ConnectionHandler* connectionHandler = protocol->getConnectionHandler();
@@ -17,22 +16,24 @@ void StompListener::run() {
             protocol->waitForConnection();
             continue;
         }
-        
+
         std::string frame;
         bool success = connectionHandler->getFrameAscii(frame, '\0');
         if (!success) {
-            std::cerr << "Error reading frame from socket." << std::endl;
+            std::cerr << "[ERROR] Failed to read frame from socket for user: " << protocol->getUsername() << std::endl;
             protocol->clearConnectionHandler();
             continue;
         }
 
+      
         try {
             protocol->parseFrame(frame);
         } catch (const std::exception& e) {
-            std::cerr << "Error parsing frame: " << e.what() << std::endl;
+            std::cerr << "[ERROR] Exception while parsing frame: " << e.what() << std::endl;
         }
     }
 }
+
 
 // Start network listener thread
 void StompListener::start() {
