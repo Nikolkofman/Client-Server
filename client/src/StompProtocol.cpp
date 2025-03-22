@@ -47,7 +47,7 @@ void StompProtocol::setConnectionHandler(const std::string& hostPort) {
 
 void StompProtocol::clearConnectionHandler() {
     std::lock_guard<std::mutex> lock(connectionMutex);
-    if (connectionHandler) {[INFO] Summary
+    if (connectionHandler) {
         connectionHandler->close();
         connectionHandler.reset();
     }
@@ -504,7 +504,7 @@ auto isTrue = [](std::string value) {
     }
 
     outFile.close();
-    std::cerr << "Summary successfully written to " << filePath << std::endl;
+    std::cerr << "[INFO] Summary successfully written to " << filePath << std::endl;
 }
 
 
