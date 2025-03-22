@@ -59,20 +59,21 @@ private:
     std::unique_ptr<ConnectionHandler> connectionHandler;
     std::mutex connectionMutex;
     std::condition_variable connectionCV; 
+    std::mutex logoutMutex;
+    std::mutex eventsMutex;
+    std::mutex subscriptionMutex;
     std::unordered_map<std::string, int> subscriptions;
+    std::unordered_map<std::string, std::unordered_map<std::string, int>> userSubscriptions;
     std::unordered_map<std::string, std::pair<std::string, std::string>> pendingReceipts;
     std::unordered_map<std::string, std::vector<Event>> savedEvents;
     std::string loggedName;
-    // int subscriptionIdCounter;
-    // int receiptIdCounter;
     bool isLoggedIn;
-    std::mutex logoutMutex;
     static std::atomic<int> globalReceiptCounter;
     static std::atomic<int> globalSubscriptionCounter;
+
     static std::mutex receiptMutex;
-    std::mutex eventsMutex;
-    std::mutex subscriptionMutex;
-    std::unordered_map<std::string, std::unordered_map<std::string, int>> userSubscriptions;
+    
+   
 
    
     
