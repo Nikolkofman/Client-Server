@@ -28,7 +28,7 @@ void StompProtocol::setConnectionHandler(const std::string& hostPort) {
     std::lock_guard<std::mutex> lock(connectionMutex);
 
     if(connectionHandler != nullptr) {
-        std::cerr << "[ERROR] ConnectionHandler already exists for user: " << loggedName << std::endl;
+        std::cerr << " ConnectionHandler already exists for user: " << loggedName << std::endl;
         return;
     }
 
@@ -41,7 +41,7 @@ void StompProtocol::setConnectionHandler(const std::string& hostPort) {
     if(connectionHandler->connect()) {
         connectionCV.notify_one();
     } else {
-        std::cerr << "[ERROR] Connection failed for user: " << loggedName << std::endl;
+        std::cerr << " Connection failed for user: " << loggedName << std::endl;
     }
 }
 
@@ -110,7 +110,7 @@ std::string StompProtocol::processCommand(const std::string& command) {
     
         std::string frame = generateSubscribeFrame(channel, subscriptionId, receiptId);
         if (!connectionHandler->sendFrameAscii(frame, '\0')) {
-            std::cerr << "[ERROR] Failed to send SUBSCRIBE frame for " << channel << std::endl;
+            std::cerr << " Failed to send SUBSCRIBE frame for " << channel << std::endl;
             return "";
         }
     
@@ -149,7 +149,7 @@ std::string StompProtocol::processCommand(const std::string& command) {
     }
     else if (action == "logout") {
         if (!isLoggedIn) {
-            std::cerr << "[ERROR] Cannot logout: User is not logged in." << std::endl;
+            std::cerr << "Cannot logout: User is not logged in." << std::endl;
             return "";
         }
     
@@ -269,7 +269,7 @@ void StompProtocol::handleConnectedFrame(const std::unordered_map<std::string, s
 void StompProtocol::handleMessageFrame(const std::unordered_map<std::string, std::string>& headers, std::istringstream& bodyStream) {
     auto destinationIt = headers.find("destination");
     if (destinationIt == headers.end()) {
-        std::cerr << "[ERROR] Malformed MESSAGE frame: missing destination header" << std::endl;
+        std::cerr << "Malformed MESSAGE frame: missing destination header" << std::endl;
         return;
     }
 
@@ -303,13 +303,13 @@ void StompProtocol::handleReceiptFrame(const std::unordered_map<std::string, std
     auto receiptIdIt = headers.find("receipt-id");
 
     if (receiptIdIt == headers.end()) {
-        std::cerr << "[ERROR] RECEIPT frame received without receipt-id!" << std::endl;
+        std::cerr << " RECEIPT frame received without receipt-id!" << std::endl;
         return;
     }
 
     std::string receiptID = trim(receiptIdIt->second);
     if (pendingReceipts.find(receiptID) == pendingReceipts.end()) {
-        std::cerr << "[WARNING] RECEIPT ID '" << receiptID << "' not found in pendingReceipts!" << std::endl;
+        std::cerr << "RECEIPT ID '" << receiptID << "' not found in pendingReceipts!" << std::endl;
         return;
     }
 
@@ -322,7 +322,7 @@ void StompProtocol::handleReceiptFrame(const std::unordered_map<std::string, std
         std::cout << "Logged out" << std::endl;
         resetState();
     } else if (action == "summary" || action == "report") {
-        std::cerr << "[DEBUG] Clearing stuck receipt for action: " << action << std::endl;
+        std::cerr << "Clearing stuck receipt for action: " << action << std::endl;
     }
 
     pendingReceipts.erase(receiptID);
@@ -413,13 +413,17 @@ void StompProtocol::handleReportCommand(const std::string& filePath) {
     std::cout << "Reported" << std::endl;
 }
 
+std::string truncateDescription(const std::string& description) {
+    return (description.length() <= 27) ? description : description.substr(0, 27) + "...";
+}
+
 // Summary command
 void StompProtocol::handleSummaryCommand(const std::string& channel, const std::string& user, const std::string& filePath) {
     std::lock_guard<std::mutex> lock(eventsMutex);
 
     std::ofstream outFile(filePath, std::ios::trunc);
     if (!outFile.is_open()) {
-        std::cerr << "[ERROR] Could not create or open file: " << filePath << std::endl;
+        std::cerr << " Could not create or open file: " << filePath << std::endl;
         return;
     }
 
@@ -435,7 +439,7 @@ void StompProtocol::handleSummaryCommand(const std::string& channel, const std::
         channelIt = savedEvents.find(alternativeChannel);
 
         if (channelIt == savedEvents.end()) {
-            std::cerr << "[ERROR] No events found for channel: " << formattedChannel 
+            std::cerr << "No events found for channel: " << formattedChannel 
                       << " or alternative: " << alternativeChannel << std::endl;
             outFile << "No events found for channel: " << formattedChannel << "\n";
             outFile.close();
@@ -452,7 +456,7 @@ void StompProtocol::handleSummaryCommand(const std::string& channel, const std::
 
 
     if (filteredEvents.empty()) {
-        std::cerr << "[WARNING] No matching events found for user: " << user << std::endl;
+        std::cerr << "No matching events found for user: " << user << std::endl;
         outFile << "No events found from user: " << user << " on channel: " << formattedChannel << "\n";
         outFile.close();
         return;
@@ -464,22 +468,14 @@ void StompProtocol::handleSummaryCommand(const std::string& channel, const std::
     });
 
     
-auto isTrue = [](std::string value) {
-    value = trim(value); 
-    return value == "true" || value == "True" || value == "1"; 
-};
+    auto isTrue = [](std::string value) {
+        value = trim(value); 
+        return value == "true" || value == "True" || value == "1"; 
+    };
 
     int activeCount = 0, forcesArrivalCount = 0;
     for (const auto& event : channelIt->second) {  
         const auto& info = event.get_general_information();
-
-        if (info.count("active")) {
-            std::string activeStatus = info.at("active");
-        } 
-        
-        if (info.count("forces_arrival_at_scene")) {
-            std::string forcesArrival = info.at("forces_arrival_at_scene");
-        }
         
         if (info.count("active") && isTrue(info.at("active"))) {
             activeCount++;
@@ -489,23 +485,23 @@ auto isTrue = [](std::string value) {
         }
     }
 
-
-    outFile << "Channel: " << formattedChannel << "\n"
-            << "Stats:\n"
-            << "Total events: " << filteredEvents.size() << "\n"
-            << "Active cases: " << activeCount << "\n"
-            << "Forces arrived at scene: " << forcesArrivalCount << "\n\n";
+    outFile << "Channel " << formattedChannel << "\n"
+        << "Stats:\n"
+        << "Total: " << filteredEvents.size() << "\n"
+        << "active: " << activeCount << "\n"
+        << "forces arrival at scene: " << forcesArrivalCount << "\n\n";
 
     outFile << "Event Reports:\n\n";
     for (const Event& event : filteredEvents) {
+        std::string summary = truncateDescription(event.get_description());  
+
         outFile << epoch_to_date(event.get_date_time()) << ":00 - " 
                 << event.get_name() << " - " << event.get_city() << ":\n"
-                << event.get_description() << "\n\n";
+                << summary << "\n\n";  
     }
-
-    outFile.close();
-    std::cerr << "[INFO] Summary successfully written to " << filePath << std::endl;
-}
+        outFile.close();
+        std::cerr << "Summary successfully written to " << filePath << std::endl;
+    }
 
 
 std::string StompProtocol::trim(const std::string& str) {  
