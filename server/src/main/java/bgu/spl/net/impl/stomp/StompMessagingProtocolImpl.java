@@ -49,22 +49,49 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
     
         return "ERROR\nmessage: Unknown command\nThe message:\n----\n" + message;
     }
-    
+
+    @Override
+    public boolean shouldTerminate() {
+        return shouldTerminate;
+    }
+
+
+    private void sendReceipt(String receiptId) {
+        if (receiptId != null && !receiptId.isEmpty()) {
+            connections.send(connectionId, "RECEIPT\nreceipt-id:" + receiptId + "\n");
+        }
+    }
 
 
     private String handleLogin(ArrayList<String> parsedMessage, String message) {
+        if (parsedMessage.size() < 5) {
+            return buildErrorFrame("Invalid login format", message);
+        }
+    
         this.username = parsedMessage.get(3);
         String password = parsedMessage.get(4);
-
-        if (User.getInstance().registerOrLogin(username, password)) {
-            if (!User.getInstance().isOnline(username)) {
-                User.getInstance().setOnlineStatus(username, true);
-                return "CONNECTED\nversion:1.2";
-            }
-            return "ERROR\nmessage: User already logged in\nThe message:\n----\n" + message;
+        User userManager = User.getInstance();
+    
+        if (!userManager.registerOrLogin(username, password)) {
+            return buildErrorFrame("Wrong password", message);
         }
-        return "ERROR\nmessage: Incorrect password\nThe message:\n----\n" + message;
+    
+        if (userManager.isOnline(username)) {
+            return buildErrorFrame("User already logged in", message);
+        }
+    
+        userManager.setOnlineStatus(username, true);
+        return buildConnectedFrame();
     }
+    
+    private String buildConnectedFrame() {
+        return "CONNECTED\nversion:1.2\n^@";
+    }
+    
+    private String buildErrorFrame(String errorMessage, String originalMessage) {
+        return "ERROR\nmessage: " + errorMessage + "\nThe message:\n----\n" + originalMessage + "\n^@";
+    }
+    
 
     private void handleSubscribe(ArrayList<String> parsedMessage) {
         String channel = parsedMessage.get(1).substring(12);
@@ -87,6 +114,14 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
         sendReceipt(receiptId);
     }
     
+
+    private void handleLogout(ArrayList<String> parsedMessage, String message) {
+        String receiptId = parsedMessage.size() > 1 ? parsedMessage.get(1).substring(8) : null;
+        sendReceipt(receiptId);
+        shouldTerminate = true;
+        connections.disconnect(connectionId);
+        User.getInstance().setOnlineStatus(this.username, false);
+    }
 
     private void handleSend(ArrayList<String> parsedMessage, String message) {
         String destination = parsedMessage.get(1).substring(12);
@@ -114,23 +149,14 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
     
             connections.send(destination.substring(1), broadcastMessage);
     
-            sendReceipt(receiptId); // Ensure receipt is sent if requested
+            sendReceipt(receiptId); 
     
         } catch (Exception e) {
             connections.send(connectionId, "ERROR\nmessage: Internal server error in SEND command\nThe message:\n----\n" + message);
         }
     }
     
-    private void handleLogout(ArrayList<String> parsedMessage, String message) {
-        String receiptId = parsedMessage.size() > 1 ? parsedMessage.get(1).substring(8) : null;
-        sendReceipt(receiptId);
-        shouldTerminate = true;
-        connections.disconnect(connectionId);
-        User.getInstance().setOnlineStatus(this.username, false);
-    }
-    
-    
-
+  
     private ArrayList<String> parseMessage(String input) {
         ArrayList<String> parsedList = new ArrayList<>();
         StringBuilder current = new StringBuilder();
@@ -159,18 +185,6 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
         }
     
         return parsedList;
-    }
-    
-    @Override
-    public boolean shouldTerminate() {
-        return shouldTerminate;
-    }
-
-
-    private void sendReceipt(String receiptId) {
-        if (receiptId != null && !receiptId.isEmpty()) {
-            connections.send(connectionId, "RECEIPT\nreceipt-id:" + receiptId + "\n");
-        }
     }
     
     
